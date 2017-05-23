@@ -1,13 +1,17 @@
 package leaf
 
 import (
-	"github.com/name5566/leaf/cluster"
-	"github.com/name5566/leaf/conf"
-	"github.com/name5566/leaf/console"
-	"github.com/name5566/leaf/log"
-	"github.com/name5566/leaf/module"
+	"github.com/lovelly/leaf/cluster"
+	"github.com/lovelly/leaf/conf"
+	"github.com/lovelly/leaf/console"
+	"github.com/lovelly/leaf/log"
+	"github.com/lovelly/leaf/module"
 	"os"
 	"os/signal"
+)
+
+var (
+	OnDestroy func()
 )
 
 func Run(mods ...module.Module) {
@@ -40,6 +44,10 @@ func Run(mods ...module.Module) {
 	signal.Notify(c, os.Interrupt, os.Kill)
 	sig := <-c
 	log.Release("Leaf closing down (signal: %v)", sig)
+
+	if OnDestroy != nil {
+		OnDestroy()
+	}
 	console.Destroy()
 	cluster.Destroy()
 	module.Destroy()

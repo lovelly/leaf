@@ -1,10 +1,11 @@
 package network
 
 import (
-	"github.com/name5566/leaf/log"
+	"github.com/lovelly/leaf/log"
 	"net"
 	"sync"
 	"time"
+	"fmt"
 )
 
 type TCPServer struct {
@@ -57,6 +58,7 @@ func (server *TCPServer) init() {
 	msgParser.SetMsgLen(server.LenMsgLen, server.MinMsgLen, server.MaxMsgLen)
 	msgParser.SetByteOrder(server.LittleEndian)
 	server.msgParser = msgParser
+	log.Debug("TCPServer listen ok, addr:%s",server.Addr)
 }
 
 func (server *TCPServer) run() {
@@ -66,6 +68,7 @@ func (server *TCPServer) run() {
 	var tempDelay time.Duration
 	for {
 		conn, err := server.ln.Accept()
+		fmt.Println(" new conn ==== ", conn.RemoteAddr().String())
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Temporary() {
 				if tempDelay == 0 {

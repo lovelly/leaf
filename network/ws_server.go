@@ -3,7 +3,7 @@ package network
 import (
 	"crypto/tls"
 	"github.com/gorilla/websocket"
-	"github.com/name5566/leaf/log"
+	"github.com/lovelly/leaf/log"
 	"net"
 	"net/http"
 	"sync"
@@ -35,6 +35,7 @@ type WSHandler struct {
 }
 
 func (handler *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Debug("WSHandler new conn remoteArrd:%s", r.RemoteAddr)
 	if r.Method != "GET" {
 		http.Error(w, "Method not allowed", 405)
 		return
@@ -136,7 +137,7 @@ func (server *WSServer) Start() {
 		WriteTimeout:   server.HTTPTimeout,
 		MaxHeaderBytes: 1024,
 	}
-
+	log.Debug("WSServer listen ok, addr:%s",server.Addr)
 	go httpServer.Serve(ln)
 }
 

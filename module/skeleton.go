@@ -1,10 +1,10 @@
 package module
 
 import (
-	"github.com/name5566/leaf/chanrpc"
-	"github.com/name5566/leaf/console"
-	"github.com/name5566/leaf/go"
-	"github.com/name5566/leaf/timer"
+	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/console"
+	"github.com/lovelly/leaf/go"
+	"github.com/lovelly/leaf/timer"
 	"time"
 )
 
@@ -65,6 +65,10 @@ func (s *Skeleton) Run(closeSig chan bool) {
 			t.Cb()
 		}
 	}
+}
+
+func (s *Skeleton) GetChanAsynRet() chan *chanrpc.RetInfo {
+	return s.client.ChanAsynRet
 }
 
 func (s *Skeleton) AfterFunc(d time.Duration, cb func()) *timer.Timer {

@@ -2,27 +2,56 @@ package console
 
 import (
 	"bufio"
-	"github.com/name5566/leaf/conf"
-	"github.com/name5566/leaf/network"
+	"github.com/lovellyn416/leaf/conf"
+	"github.com/lovelly/leaf/network"
 	"math"
 	"strconv"
 	"strings"
+	"github.com/lovelly/leaf/log"
+	"os"
 )
 
 var server *network.TCPServer
 
 func Init() {
-	if conf.ConsolePort == 0 {
-		return
+	go run()
+
+	if conf.ConsolePort != 0 {
+		server = new(network.TCPServer)
+		server.Addr = "localhost:" + strconv.Itoa(conf.ConsolePort)
+		server.MaxConnNum = int(math.MaxInt32)
+		server.PendingWriteNum = 100
+		server.NewAgent = newAgent
+		server.Start()
 	}
+}
 
-	server = new(network.TCPServer)
-	server.Addr = "localhost:" + strconv.Itoa(conf.ConsolePort)
-	server.MaxConnNum = int(math.MaxInt32)
-	server.PendingWriteNum = 100
-	server.NewAgent = newAgent
+func run() {
+	for {
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			log.Error("console ReadString is error: %v", err)
+			continue
+		}
+		line = strings.TrimSuffix(line[:len(line)-1], "\r")
 
-	server.Start()
+		args := strings.Fields(line)
+		if len(args) == 0 {
+			continue
+		}
+
+		name := args[0]
+		c := getCommand(name)
+		if c == nil {
+			log.Error("command not found, try `help` for help\r\n")
+			continue
+		}
+		output := c.run(args[1:])
+		if output != "" {
+			log.Release("%v cmd run result: %v", name, output)
+		}
+	}
 }
 
 func Destroy() {
@@ -62,13 +91,8 @@ func (a *Agent) Run() {
 		if args[0] == "quit" {
 			break
 		}
-		var c Command
-		for _, _c := range commands {
-			if _c.name() == args[0] {
-				c = _c
-				break
-			}
-		}
+
+		c := getCommand(args[0])
 		if c == nil {
 			a.conn.Write([]byte("command not found, try `help` for help\r\n"))
 			continue
