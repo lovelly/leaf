@@ -9,6 +9,7 @@ import (
 	"time"
 	"github.com/lovelly/leaf/module"
 	"fmt"
+	"io"
 )
 
 type Gate struct {
@@ -165,10 +166,13 @@ func (a *agent) Run() {
 	for {
 		data, err := a.conn.ReadMsg()
 		if err != nil {
-			log.Debug("read message: %v", err)
+			if err != io.EOF {
+				log.Debug("read message: %v", err)
+			}
 			break
 		}
 
+		log.Debug("IN msg : %s, userId:%v", string(data), a.UserData())
 		if a.chanRPC == nil {
 			err = handleMsgData([]interface{}{data})
 		} else {
@@ -193,6 +197,7 @@ func (a *agent) OnClose() {
 func (a *agent) WriteMsg(msg interface{}) {
 	if a.gate.Processor != nil {
 		data, err := a.gate.Processor.Marshal(msg)
+		log.Debug("OUT msg : %s, userId:%v", string(data[0]), a.UserData())
 		if err != nil {
 			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)
 			return
