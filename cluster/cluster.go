@@ -230,7 +230,7 @@ func (a *Agent) Run() {
 		data, err := a.conn.ReadMsg()
 		if err != nil {
 			if err != io.EOF {
-				log.Debug("read message: %v", err)
+				log.Error("read message: %v", err)
 			}
 			break
 		}
@@ -238,12 +238,12 @@ func (a *Agent) Run() {
 		if Processor != nil {
 			msg, err := Processor.Unmarshal(a.decoder, data)
 			if err != nil {
-				log.Debug("unmarshal message error: %v", err)
+				log.Error("unmarshal message error: %v", err)
 				break
 			}
 			err = Processor.Route(msg, a)
 			if err != nil {
-				log.Debug("route message error: %v", err)
+				log.Error("route message error: %v", err)
 				break
 			}
 		}
