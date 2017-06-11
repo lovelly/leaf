@@ -38,7 +38,7 @@ func RandGroup(p ...uint32) int {
 	panic("bug")
 }
 
-func RandInterval(b1, b2 int32) int32 {
+func RandInterval(b1, b2 int) int {
 	if b1 == b2 {
 		return b1
 	}
@@ -47,7 +47,7 @@ func RandInterval(b1, b2 int32) int32 {
 	if min > max {
 		min, max = max, min
 	}
-	return int32(rand.Int63n(max-min+1) + min)
+	return int(rand.Int63n(max-min+1) + min)
 }
 
 func RandIntervalN(b1, b2 int32, n uint32) []int32 {

@@ -3,6 +3,7 @@ package chanrpc
 import (
 	"errors"
 	"fmt"
+
 	"github.com/lovelly/leaf/log"
 )
 
@@ -23,13 +24,14 @@ type Server struct {
 	// func(args []interface{}) []interface{}
 	functions map[interface{}]*FuncInfo
 	ChanCall  chan *CallInfo
+	CloseFlg  bool
 }
 
 type FuncInfo struct {
 	id    interface{}
 	f     interface{}
 	fType int
-	this interface{}
+	this  interface{}
 }
 
 type CallInfo struct {
@@ -76,7 +78,7 @@ func Assert(i interface{}) []interface{} {
 	}
 }
 
-func  (s *Server) HasFunc(id interface{}) bool {
+func (s *Server) HasFunc(id interface{}) bool {
 	_, ok := s.functions[id]
 	return ok
 }
@@ -97,15 +99,14 @@ func (s *Server) RegisterFromType(id interface{}, f interface{}, fType int, this
 	}
 
 	if len(this_param) > 0 {
-		if fType !=FuncThis {
+		if fType != FuncThis {
 			panic(fmt.Sprintf("function type not FuncThis, type:%v", fType))
 		}
-		s.functions[id] = &FuncInfo{id: id, f: f, fType: fType, this:this_param[0]}
-	}else {
+		s.functions[id] = &FuncInfo{id: id, f: f, fType: fType, this: this_param[0]}
+	} else {
 		s.functions[id] = &FuncInfo{id: id, f: f, fType: fType}
 	}
 }
-
 
 func (s *Server) Register(id interface{}, f interface{}) {
 	s.RegisterFromType(id, f, FuncCommon)
@@ -138,7 +139,6 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		}
 	}()
 
-
 	if ci.fInfo.fType == FuncRoute {
 		ci.args = append(ci.args, ci.fInfo.id)
 	}
@@ -166,6 +166,10 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 }
 
 func (s *Server) Exec(ci *CallInfo) {
+	if s.CloseFlg {
+		log.Error("at call Exec chan is close %v", ci)
+		return
+	}
 	err := s.exec(ci)
 	if err != nil {
 		log.Error("%v", err)
@@ -208,8 +212,12 @@ func (s *Server) CallN(id interface{}, args ...interface{}) ([]interface{}, erro
 }
 
 func (s *Server) Close() {
+	if s.CloseFlg {
+		log.Error(" double close Server chanAll")
+		return
+	}
 	close(s.ChanCall)
-
+	s.CloseFlg = true
 	for ci := range s.ChanCall {
 		s.ret(ci, &RetInfo{
 			Err: errors.New("chanrpc server closed"),
