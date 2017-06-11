@@ -2,7 +2,7 @@ package console
 
 import (
 	"bufio"
-	"github.com/lovellyn416/leaf/conf"
+	"github.com/lovelly/leaf/conf"
 	"github.com/lovelly/leaf/network"
 	"math"
 	"strconv"

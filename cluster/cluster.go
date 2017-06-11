@@ -12,7 +12,7 @@ import (
 	"github.com/lovelly/leaf/chanrpc"
 	lgob "github.com/lovelly/leaf/network/gob"
 	"sync"
-	"sync/atomic"
+	"io"
 )
 
 const (
@@ -44,44 +44,14 @@ func Init() {
 		server.Start()
 	}
 
-	for serverName, addr := range conf.ConnAddrs {
-		AddClient(serverName, addr)
-	}
-
 	if conf.HeartBeatInterval <= 0 {
 		conf.HeartBeatInterval = 5
 		log.Release("invalid HeartBeatInterval, reset to %v", conf.HeartBeatInterval)
 	}
-
-	wg.Add(1)
-	go run()
-}
-
-func run() {
-	defer wg.Done()
-
-	msg := &S2S_HeartBeat{}
-	timer := time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
-
-	for {
-		select {
-		case <-closeSig:
-			return
-		case <-timer.C:
-			agentsMutex.RLock()
-			for _, agent := range agents {
-				if atomic.AddInt32(&agent.heartBeatWaitTimes, 1) >= 2 {
-					agent.conn.Destroy()
-				} else {
-					agent.WriteMsg(msg)
-				}
-			}
-			agentsMutex.RUnlock()
-		}
-	}
 }
 
 func AddClient(serverName, addr string) {
+	log.Debug("at cluster AddClient %s, %s",serverName,  addr)
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
@@ -104,12 +74,14 @@ func AddClient(serverName, addr string) {
 func _removeClient(serverName string) {
 	client, ok := clients[serverName]
 	if ok {
+		log.Debug("at cluster _removeClient %s",serverName)
 		client.Close()
 		delete(clients, serverName)
 	}
 }
 
 func RemoveClient(serverName string) {
+	log.Debug("at RemoveClient serverName:%s", serverName)
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
@@ -257,19 +229,21 @@ func (a *Agent) Run() {
 	for {
 		data, err := a.conn.ReadMsg()
 		if err != nil {
-			log.Debug("read message: %v", err)
+			if err != io.EOF {
+				log.Error("read message: %v", err)
+			}
 			break
 		}
 
 		if Processor != nil {
 			msg, err := Processor.Unmarshal(a.decoder, data)
 			if err != nil {
-				log.Debug("unmarshal message error: %v", err)
+				log.Error("unmarshal message error: %v", err)
 				break
 			}
 			err = Processor.Route(msg, a)
 			if err != nil {
-				log.Debug("route message error: %v", err)
+				log.Error("route message error: %v", err)
 				break
 			}
 		}

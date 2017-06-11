@@ -5,7 +5,6 @@ import (
 	"net"
 	"sync"
 	"time"
-	"fmt"
 )
 
 type TCPServer struct {
@@ -68,7 +67,6 @@ func (server *TCPServer) run() {
 	var tempDelay time.Duration
 	for {
 		conn, err := server.ln.Accept()
-		fmt.Println(" new conn ==== ", conn.RemoteAddr().String())
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Temporary() {
 				if tempDelay == 0 {

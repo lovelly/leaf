@@ -48,13 +48,12 @@ func GetAgent(serverName string) *Agent {
 	}
 }
 
-func Broadcast(serverType string, id interface{}, args ...interface{}) {
+func Broadcast(Prefix string, id interface{}, args ...interface{}) {
 	agentsMutex.RLock()
 	defer agentsMutex.RUnlock()
 
-	r, _ := regexp.Compile(fmt.Sprintf("%s[0-9]+$", serverType))
 	for agentName, agent := range agents {
-		if r.MatchString(agentName) {
+		if ok, _ := regexp.MatchString(Prefix,agentName); ok{
 			agent.Go(id, args...)
 		}
 	}

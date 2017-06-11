@@ -8,8 +8,8 @@ import (
 
 const (
 	FuncCommon = iota
-	FuncExtRet
 	FuncRoute
+	FuncThis
 )
 
 // one server per goroutine (goroutine not safe)
@@ -29,6 +29,7 @@ type FuncInfo struct {
 	id    interface{}
 	f     interface{}
 	fType int
+	this interface{}
 }
 
 type CallInfo struct {
@@ -75,8 +76,13 @@ func Assert(i interface{}) []interface{} {
 	}
 }
 
+func  (s *Server) HasFunc(id interface{}) bool {
+	_, ok := s.functions[id]
+	return ok
+}
+
 // you must call the function before calling Open and Go
-func (s *Server) RegisterFromType(id interface{}, f interface{}, fType int) {
+func (s *Server) RegisterFromType(id interface{}, f interface{}, fType int, this_param ...interface{}) {
 	switch f.(type) {
 	case func([]interface{}):
 	case func([]interface{}) error:
@@ -90,8 +96,16 @@ func (s *Server) RegisterFromType(id interface{}, f interface{}, fType int) {
 		panic(fmt.Sprintf("function id %v: already registered", id))
 	}
 
-	s.functions[id] = &FuncInfo{id: id, f: f, fType: fType}
+	if len(this_param) > 0 {
+		if fType !=FuncThis {
+			panic(fmt.Sprintf("function type not FuncThis, type:%v", fType))
+		}
+		s.functions[id] = &FuncInfo{id: id, f: f, fType: fType, this:this_param[0]}
+	}else {
+		s.functions[id] = &FuncInfo{id: id, f: f, fType: fType}
+	}
 }
+
 
 func (s *Server) Register(id interface{}, f interface{}) {
 	s.RegisterFromType(id, f, FuncCommon)
@@ -124,18 +138,13 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		}
 	}()
 
-	if ci.fInfo.fType != FuncCommon {
-		var extRetFunc ExtRetFunc = func(ret interface{}, err error) {
-			err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
-			if err != nil {
-				log.Error("external run return is error: %v", err)
-			}
-		}
 
-		if ci.fInfo.fType == FuncRoute {
-			ci.args = append([]interface{}{ci.fInfo.id}, ci.args...)
-		}
-		ci.args = append(ci.args, extRetFunc)
+	if ci.fInfo.fType == FuncRoute {
+		ci.args = append(ci.args, ci.fInfo.id)
+	}
+
+	if ci.fInfo.fType == FuncThis {
+		ci.args = append(ci.args, ci.fInfo.this)
 	}
 
 	// execute
@@ -153,10 +162,7 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		panic("bug")
 	}
 
-	if ci.fInfo.fType == FuncCommon {
-		return s.ret(ci, retInfo)
-	}
-	return
+	return s.ret(ci, retInfo)
 }
 
 func (s *Server) Exec(ci *CallInfo) {
