@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -82,7 +83,6 @@ func _removeClient(serverName string) {
 }
 
 func RemoveClient(serverName string) {
-	log.Debug("at RemoveClient serverName:%s", serverName)
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
@@ -107,6 +107,7 @@ func addAgent(serverName string, agent *Agent) {
 func _removeAgent(serverName string) {
 	agent, ok := agents[serverName]
 	if ok {
+		log.Debug("remove svr name ==== == %v", serverName)
 		delete(agents, serverName)
 		agent.Destroy()
 		log.Release("%v server is offline", serverName)
@@ -242,6 +243,7 @@ func (a *Agent) Run() {
 				log.Error("unmarshal message error: %v", err)
 				continue
 			}
+			log.Debug("cluster IN = %v", msg)
 			err = Processor.Route(msg, a)
 			if err != nil {
 				log.Error("route message error: %v", err)
@@ -257,7 +259,9 @@ func (a *Agent) OnClose() {
 }
 
 func (a *Agent) WriteMsg(msg interface{}) {
+
 	if Processor != nil {
+		log.Debug("cluster OUT = %v", msg)
 		a.encMutex.Lock()
 		data, err := Processor.Marshal(a.encoder, msg)
 		a.encMutex.Unlock()
@@ -265,11 +269,16 @@ func (a *Agent) WriteMsg(msg interface{}) {
 			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)
 			return
 		}
+		if len(data) < 1 {
+			log.Error("cluster WriteMsg msg len == 0")
+			return
+		}
 		err = a.conn.WriteMsg(data...)
 		if err != nil {
 			log.Error("write message %v error: %v", reflect.TypeOf(msg), err)
 		}
 	}
+
 }
 
 func (a *Agent) LocalAddr() net.Addr {
@@ -299,6 +308,23 @@ func (a *Agent) SetUserData(data interface{}) {
 func (a *Agent) Go(id interface{}, args ...interface{}) {
 	msg := &S2S_RequestMsg{MsgID: id, CallType: callNotForResult, Args: args}
 	a.WriteMsg(msg)
+}
+
+//timeOutCall 会丢弃执行结果
+func (a *Agent) TimeOutCall1(id interface{}, t time.Duration, args ...interface{}) (interface{}, error) {
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet}
+	requestID := a.registerRequest(request)
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
+	a.WriteMsg(msg)
+	select {
+	case ri := <-chanSyncRet:
+		return ri.Ret, ri.Err
+	case <-time.After(time.Second * t):
+		a.popRequest(requestID)
+		return nil, errors.New(fmt.Sprintf("time out at TimeOutCall1 function: %v", id))
+	}
 }
 
 func (a *Agent) Call0(id interface{}, args ...interface{}) error {
