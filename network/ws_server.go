@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lovelly/leaf/conf"
 	"github.com/lovelly/leaf/log"
 )
 
@@ -16,7 +17,7 @@ const (
 	writeWait = 30 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 45 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
@@ -48,10 +49,11 @@ type WSHandler struct {
 
 func (handler *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Debug("WSHandler new conn remoteArrd:%s", r.RemoteAddr)
-	if r.Method != "GET" {
+	if r.Method != "GET" || conf.Shutdown {
 		http.Error(w, "Method not allowed", 405)
 		return
 	}
+
 	conn, err := handler.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Debug("upgrade error: %v", err)
@@ -110,7 +112,7 @@ func (server *WSServer) Start() {
 		log.Release("invalid PendingWriteNum, reset to %v", server.PendingWriteNum)
 	}
 	if server.MaxMsgLen <= 0 {
-		server.MaxMsgLen = 4096
+		server.MaxMsgLen = 65535
 		log.Release("invalid MaxMsgLen, reset to %v", server.MaxMsgLen)
 	}
 	if server.HTTPTimeout <= 0 {

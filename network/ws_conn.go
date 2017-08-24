@@ -6,8 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"fmt"
+
 	"github.com/gorilla/websocket"
 	"github.com/lovelly/leaf/log"
+	"github.com/lovelly/leaf/util"
 )
 
 type WebsocketConnSet map[*websocket.Conn]struct{}
@@ -40,6 +43,7 @@ func newWSConn(conn *websocket.Conn, pendingWriteNum int, maxMsgLen uint32) *WSC
 			case b, ok := <-wsConn.writeChan:
 				conn.SetWriteDeadline(time.Now().Add(writeWait))
 				if b == nil || !ok {
+					log.Debug("write stop msg, send close to client ............... ")
 					conn.WriteMessage(websocket.CloseMessage, []byte{})
 					return
 				}
@@ -53,6 +57,7 @@ func newWSConn(conn *websocket.Conn, pendingWriteNum int, maxMsgLen uint32) *WSC
 			case <-ticker.C:
 				conn.SetWriteDeadline(time.Now().Add(writeWait))
 				if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+					log.Error("ping client error")
 					return
 				}
 			}
@@ -111,7 +116,14 @@ func (wsConn *WSConn) RemoteAddr() net.Addr {
 // goroutine not safe
 func (wsConn *WSConn) ReadMsg() ([]byte, error) {
 	_, b, err := wsConn.conn.ReadMessage()
-	return b, err
+	if err != nil {
+		return b, err
+	}
+	str, err := util.DesDecrypt(b, []byte("mqjx@mqc"))
+	if err != nil {
+		return b, errors.New(fmt.Sprintf("at ws ReadMsg msg DesDecrypt error :%s", err.Error()))
+	}
+	return str, err
 }
 
 // args must not be modified by the others goroutines
@@ -137,7 +149,12 @@ func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 
 	// don't copy
 	if len(args) == 1 {
-		wsConn.doWrite(args[0])
+		str, err := util.DesEncrypt(args[0], []byte("mqjx@mqc"))
+		if err != nil {
+			return errors.New(fmt.Sprintf("at ws write msg DesEncrypt error :%s", err.Error()))
+		}
+
+		wsConn.doWrite(str)
 		return nil
 	}
 
@@ -148,8 +165,12 @@ func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 		copy(msg[l:], args[i])
 		l += len(args[i])
 	}
+	str, err := util.DesEncrypt(msg, []byte("mqjx@mqc"))
+	if err != nil {
+		return errors.New(fmt.Sprintf("at ws write msg DesEncrypt error :%s", err.Error()))
+	}
 
-	wsConn.doWrite(msg)
+	wsConn.doWrite(str)
 
 	return nil
 }

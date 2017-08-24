@@ -1,48 +1,167 @@
 package cluster
 
 import (
-	"bytes"
-	"log"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
 
-	nsq "github.com/nsqio/go-nsq"
-	"github.com/segmentio/go-queue"
+	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/log"
 )
 
-type cluster_conf interface {
-	getNsqAddress() string
-	getConCurrency() int
-	getLookupAddress() string
-	getTopic() string
-	getChannel() string
+var (
+	clientsMutex sync.Mutex
+	clients      = make(map[string]*NsqClient)
+)
+
+type NsqClient struct {
+	Addr       string
+	ServerName string
 }
 
-func Start(cfg cluster_conf) {
-	done := make(chan bool)
-	b := new(bytes.Buffer)
-	l := log.New(b, "", 0)
+func GetGameServerName(id int) string {
+	return fmt.Sprintf("GameSvr_%d", id)
+}
 
-	c := queue.NewConsumer("events", "ingestion")
-	c.SetLogger(l, nsq.LogLevelDebug)
+func GetHallServerName(id int) string {
+	return fmt.Sprintf("HallSvr_%d", id)
+}
 
-	c.Set("nsqd", ":5001")
-	c.Set("nsqds", []interface{}{":5001"})
-	c.Set("concurrency", 5)
-	c.Set("max_attempts", 10)
-	c.Set("max_in_flight", 150)
-	c.Set("default_requeue_delay", "15s")
+func AddClient(c *NsqClient) {
+	log.Debug("at cluster AddClient %s, %s", c.ServerName, c.Addr)
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
 
-	err := c.Start(nsq.HandlerFunc(func(msg *nsq.Message) error {
-		done <- true
-		return nil
-	}))
+	clients[c.ServerName] = c
+}
 
-	//assert.Equal(t, nil, err)
+func HasClient(name string) bool {
+	_, ok := clients[name]
+	return ok
+}
 
-	go func() {
-		p, err := nsq.NewProducer(":5001", nsq.NewConfig())
-		p.Publish("events", []byte("hello"))
-	}()
+func RemoveClient(serverName string) {
+	_, ok := clients[serverName]
+	if ok {
+		log.Debug("at cluster _removeClient %s", serverName)
+		delete(clients, serverName)
+		ForEachRequest(func(id int64, request *RequestInfo) {
+			if request.serverName != serverName {
+				return
+			}
+			ret := &chanrpc.RetInfo{Ret: nil, Cb: request.cb}
+			ret.Err = fmt.Errorf("at call %s server is close", serverName)
+			request.chanRet <- ret
+			delete(requestMap, id)
+		})
+		log.Debug("at cluster _removeClient ok %s", serverName)
+	}
+}
 
-	<-done
-	//assert.Equal(t, nil, c.Stop())
+func Broadcast(serverName string, id interface{}, args ...interface{}) {
+	msg := &S2S_NsqMsg{MsgType: NsqMsgTypeBroadcast, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+}
+
+func Go(serverName string, id interface{}, args ...interface{}) {
+	msg := &S2S_NsqMsg{MsgType: NsqMsgTypeNotForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+}
+
+//timeOutCall 会丢弃执行结果
+func TimeOutCall1(serverName string, t time.Duration, id interface{}, args ...interface{}) (interface{}, error) {
+	if !HasClient(serverName) {
+		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
+	}
+
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet, serverName: serverName}
+	requestID := registerRequest(request)
+	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: NsqMsgTypeForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+	select {
+	case ri := <-chanSyncRet:
+		return ri.Ret, ri.Err
+	case <-time.After(time.Second * t):
+		popRequest(requestID)
+		return nil, errors.New(fmt.Sprintf("time out at TimeOutCall1 msg: %v", args))
+	}
+}
+
+func Call0(serverName string, id interface{}, args ...interface{}) error {
+	if !HasClient(serverName) {
+		return fmt.Errorf("TimeOutCall1 %s is off line", serverName)
+	}
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet, serverName: serverName}
+	requestID := registerRequest(request)
+	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: NsqMsgTypeForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+
+	ri := <-chanSyncRet
+	return ri.Err
+}
+
+func Call1(serverName string, id interface{}, args ...interface{}) (interface{}, error) {
+	if !HasClient(serverName) {
+		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
+	}
+
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet, serverName: serverName}
+	requestID := registerRequest(request)
+	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: NsqMsgTypeForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+
+	ri := <-chanSyncRet
+	return ri.Ret, ri.Err
+}
+
+func CallN(serverName string, id interface{}, args ...interface{}) ([]interface{}, error) {
+	if !HasClient(serverName) {
+		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
+	}
+
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet, serverName: serverName}
+	requestID := registerRequest(request)
+	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: NsqMsgTypeForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
+
+	ri := <-chanSyncRet
+	return chanrpc.Assert(ri.Ret), ri.Err
+}
+
+func AsynCall(serverName string, chanAsynRet chan *chanrpc.RetInfo, id interface{}, args ...interface{}) {
+	lastIndex := len(args) - 1
+	cb := args[lastIndex]
+	args = args[:lastIndex]
+
+	if !HasClient(serverName) {
+		ret := &chanrpc.RetInfo{Cb: cb, Err: fmt.Errorf("AsynCall %s is off line", serverName)}
+		chanAsynRet <- ret
+		return
+	}
+
+	var callType uint8
+	switch cb.(type) {
+	case func(error):
+		callType = NsqMsgTypeForResult
+	case func(interface{}, error):
+		callType = NsqMsgTypeForResult
+	case func([]interface{}, error):
+		callType = NsqMsgTypeForResult
+	default:
+		panic(fmt.Sprintf("%v asyn call definition of callback function is invalid", args))
+	}
+
+	request := &RequestInfo{cb: cb, chanRet: chanAsynRet, serverName: serverName}
+	requestID := registerRequest(request)
+	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: callType, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
+	Publish(msg)
 }

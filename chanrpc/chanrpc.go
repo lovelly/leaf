@@ -43,6 +43,14 @@ type CallInfo struct {
 	cb      interface{}
 }
 
+func (c *CallInfo) GetFid() interface{} {
+	return c.fInfo.id
+}
+
+func (c *CallInfo) GetArgs() []interface{} {
+	return c.args
+}
+
 func BuildGoCallInfo(f *FuncInfo, args ...interface{}) *CallInfo {
 	return &CallInfo{
 		fInfo: f,
@@ -189,7 +197,7 @@ func (s *Server) Exec(ci *CallInfo) {
 // goroutine safe
 func (s *Server) Go(id interface{}, args ...interface{}) {
 	if s.CloseFlg {
-		log.Error("at Go chan is close %v", id)
+		log.Error("at Go chan is close funcName : =====  %v ", id)
 		return
 	}
 	f := s.functions[id]
@@ -216,7 +224,11 @@ func (s *Server) Call0(id interface{}, args ...interface{}) error {
 		log.Error("at Call0 chan is close %v", id)
 		return errors.New("] send on closed channel")
 	}
-	return s.Open(0).Call0(id, args...)
+	err := s.Open(0).Call0(id, args...)
+	if err != nil {
+		log.Error("call %s faild error:%s", id, err.Error())
+	}
+	return err
 }
 
 // goroutine safe
@@ -422,16 +434,19 @@ func (c *Client) RpcCall(id interface{}, args ...interface{}) {
 	cb := args[lastIndex]
 	args = args[:lastIndex]
 
+	var cbFunc func(*RetInfo)
+	if cb != nil {
+		cbFunc = cb.(func(*RetInfo))
+	}
+
 	var err error
 	f := c.s.functions[id]
 	if f == nil {
 		err = fmt.Errorf("function id %v: function not registered", id)
+		if cbFunc != nil {
+			cbFunc(&RetInfo{Ret: nil, Err: err})
+		}
 		return
-	}
-
-	var cbFunc func(*RetInfo)
-	if cb != nil {
-		cbFunc = cb.(func(*RetInfo))
 	}
 
 	err = c.call(&CallInfo{
@@ -439,6 +454,7 @@ func (c *Client) RpcCall(id interface{}, args ...interface{}) {
 		args:  args,
 		cb:    cb,
 	}, false)
+
 	if err != nil && cbFunc != nil {
 		cbFunc(&RetInfo{Ret: nil, Err: err})
 	}

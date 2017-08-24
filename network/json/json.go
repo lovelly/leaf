@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 
+	"runtime/debug"
+
 	"github.com/lovelly/leaf/chanrpc"
 	"github.com/lovelly/leaf/log"
 )
@@ -38,14 +40,14 @@ func NewProcessor() *Processor {
 func (p *Processor) Register(msg interface{}) string {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		log.Fatal("json message pointer required")
+		log.Fatal("json message pointer required", string(debug.Stack()))
 	}
 	msgID := msgType.Elem().Name()
 	if msgID == "" {
-		log.Fatal("unnamed json message")
+		log.Fatal("unnamed json message", string(debug.Stack()))
 	}
 	if _, ok := p.msgInfo[msgID]; ok {
-		log.Fatal("message %v is already registered", msgID)
+		log.Fatal("message %v is already registered %s", msgID, string(debug.Stack()))
 	}
 
 	i := new(MsgInfo)
@@ -58,12 +60,12 @@ func (p *Processor) Register(msg interface{}) string {
 func (p *Processor) SetRouter(msg interface{}, msgRouter *chanrpc.Server) {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		log.Fatal("json message pointer required")
+		log.Fatal("json message pointer required", string(debug.Stack()))
 	}
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		log.Fatal("message %v not registered", msgID)
+		log.Fatal("message %v not registered, %s", msgID, string(debug.Stack()))
 	}
 
 	i.msgRouter = msgRouter
@@ -73,7 +75,7 @@ func (p *Processor) SetRouter(msg interface{}, msgRouter *chanrpc.Server) {
 func (p *Processor) SetHandler(msg interface{}, msgHandler MsgHandler) {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		log.Fatal("json message pointer required")
+		log.Fatal("json message pointer required", string(debug.Stack()))
 	}
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
@@ -88,7 +90,7 @@ func (p *Processor) SetHandler(msg interface{}, msgHandler MsgHandler) {
 func (p *Processor) SetRawHandler(msg interface{}, msgRawHandler MsgHandler) {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		log.Fatal("json message pointer required")
+		log.Fatal("json message pointer required", string(debug.Stack()))
 	}
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
@@ -105,7 +107,7 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 	if msgRaw, ok := msg.(MsgRaw); ok {
 		i, ok := p.msgInfo[msgRaw.msgID]
 		if !ok {
-			return fmt.Errorf("message %v not registered", msgRaw.msgID)
+			return fmt.Errorf("at Route message %v not registered", msgRaw.msgID)
 		}
 		if i.msgRawHandler != nil {
 			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgRawData, userData})
@@ -121,7 +123,7 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		return fmt.Errorf("message %v not registered", msgID)
+		return fmt.Errorf("at Route 11 message %v not registered", msgID)
 	}
 	if i.msgHandler != nil {
 		i.msgHandler([]interface{}{msg, userData})
@@ -140,7 +142,7 @@ func (p *Processor) RouteByType(msgType reflect.Type, msg interface{}, userData 
 	if msgRaw, ok := msg.(MsgRaw); ok {
 		i, ok := p.msgInfo[msgRaw.msgID]
 		if !ok {
-			return fmt.Errorf("message %v not registered", msgRaw.msgID)
+			return fmt.Errorf("at RouteByTypemessage %v not registered ", msgRaw.msgID)
 		}
 		if i.msgRawHandler != nil {
 			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgRawData, userData})
@@ -151,7 +153,7 @@ func (p *Processor) RouteByType(msgType reflect.Type, msg interface{}, userData 
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		return fmt.Errorf("message %v not registered", msgID)
+		return fmt.Errorf("at RouteByType 11 message %v not registered", msgID)
 	}
 	if i.msgHandler != nil {
 		i.msgHandler([]interface{}{msg, userData})
@@ -178,7 +180,7 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 	for msgID, data := range m {
 		i, ok := p.msgInfo[msgID]
 		if !ok {
-			return nil, fmt.Errorf("message %v not registered", msgID)
+			return nil, fmt.Errorf("at json Unmarshal message %v not registered", msgID)
 		}
 
 		// msg
@@ -197,15 +199,36 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		return nil, errors.New("json message pointer required")
+		return nil, fmt.Errorf("json message pointer required cur:%s", msgType.String())
 	}
 	msgID := msgType.Elem().Name()
 	if _, ok := p.msgInfo[msgID]; !ok {
-		return nil, fmt.Errorf("message %v not registered", msgID)
+		return nil, fmt.Errorf("at json Marshal message %v not registered", msgID)
 	}
 
 	// data
 	m := map[string]interface{}{msgID: msg}
 	data, err := json.Marshal(m)
 	return [][]byte{data}, err
+}
+
+func (p *Processor) GetMsgId(msg interface{}) (string, error) {
+	msgType := reflect.TypeOf(msg)
+	if msgType == nil || msgType.Kind() != reflect.Ptr {
+		return "", fmt.Errorf("json message pointer required cur:%s", msgType.String())
+	}
+	msgID := msgType.Elem().Name()
+	if _, ok := p.msgInfo[msgID]; !ok {
+		return "", fmt.Errorf("at json GetMsgId message %v not registered", msgID)
+	}
+	return msgID, nil
+}
+
+func (p *Processor) GetAllMsgs() map[string]interface{} {
+	m := make(map[string]interface{})
+	for _, v := range p.msgInfo {
+		msg := reflect.New(v.msgType.Elem()).Interface()
+		m[v.msgType.String()] = msg
+	}
+	return m
 }

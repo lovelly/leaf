@@ -1,17 +1,19 @@
 package gob
 
 import (
+	"bytes"
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
+
 	"github.com/lovelly/leaf/chanrpc"
 	"github.com/lovelly/leaf/log"
-	"reflect"
-	"bytes"
 )
 
 type Processor struct {
-	msgInfo  map[string]*MsgInfo
+	msgInfo map[string]*MsgInfo
 }
 
 type Buffer struct {
@@ -19,25 +21,27 @@ type Buffer struct {
 }
 
 type Encoder struct {
-	buffer *Buffer
-	coder  *gob.Encoder
+	buffer   *Buffer
+	coder    *gob.Encoder
+	encMutex sync.Mutex
 }
 
 func NewEncoder() *Encoder {
 	buff := &Buffer{}
 	coder := gob.NewEncoder(buff)
-	return &Encoder{buff, coder}
+	return &Encoder{buffer: buff, coder: coder}
 }
 
 type Decoder struct {
-	buffer *Buffer
-	coder  *gob.Decoder
+	buffer   *Buffer
+	coder    *gob.Decoder
+	decMutex sync.Mutex
 }
 
 func NewDecoder() *Decoder {
 	buff := &Buffer{}
 	coder := gob.NewDecoder(buff)
-	return &Decoder{buff, coder}
+	return &Decoder{buffer: buff, coder: coder}
 }
 
 type MsgInfo struct {
@@ -160,8 +164,11 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 	return nil
 }
 
+/*
 // goroutine safe
 func (p *Processor) Unmarshal(dec *Decoder, data []byte) (interface{}, error) {
+	dec.decMutex.Lock()
+	defer dec.decMutex.Unlock()
 	var msgID string
 	dec.buffer.Buffer = bytes.NewBuffer(data)
 	err := dec.coder.Decode(&msgID)
@@ -169,6 +176,7 @@ func (p *Processor) Unmarshal(dec *Decoder, data []byte) (interface{}, error) {
 		return nil, err
 	}
 
+	log.Debug("read msf is == %s", msgID)
 	i, ok := p.msgInfo[msgID]
 	if !ok {
 		return nil, fmt.Errorf("message %v not registered", msgID)
@@ -186,7 +194,10 @@ func (p *Processor) Unmarshal(dec *Decoder, data []byte) (interface{}, error) {
 }
 
 // goroutine safe
+
 func (p *Processor) Marshal(enc *Encoder, msg interface{}) ([][]byte, error) {
+	enc.encMutex.Lock()
+	defer enc.encMutex.Unlock()
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
 		return nil, errors.New("json message pointer required")
@@ -205,4 +216,60 @@ func (p *Processor) Marshal(enc *Encoder, msg interface{}) ([][]byte, error) {
 
 	err = enc.coder.Encode(msg)
 	return [][]byte{enc.buffer.Bytes()}, err
+}
+*/
+
+/////////
+func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
+	decoder := gob.NewDecoder(bytes.NewBuffer(data))
+	var msgID string
+	err := decoder.Decode(&msgID)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Debug("read msf is == %s", msgID)
+	i, ok := p.msgInfo[msgID]
+	if !ok {
+		return nil, fmt.Errorf("message %v not registered", msgID)
+	}
+
+	// msg
+	if i.msgRawHandler != nil {
+		return MsgRaw{msgID, data}, nil
+	} else {
+		msg := reflect.New(i.msgType.Elem()).Interface()
+		return msg, decoder.Decode(msg)
+	}
+
+	panic("bug")
+}
+
+// goroutine safe
+func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
+	msgID, err := p.GetMsgId(msg)
+	if err != nil {
+		return nil, err
+	}
+	buf := &bytes.Buffer{}
+	encoder := gob.NewEncoder(buf)
+	err = encoder.Encode(&msgID)
+	if err != nil {
+		return [][]byte{buf.Bytes()}, err
+	}
+
+	err = encoder.Encode(msg)
+	return [][]byte{buf.Bytes()}, err
+}
+
+func (p *Processor) GetMsgId(msg interface{}) (string, error) {
+	msgType := reflect.TypeOf(msg)
+	if msgType == nil || msgType.Kind() != reflect.Ptr {
+		return "", errors.New("json message pointer required")
+	}
+	msgID := msgType.Elem().Name()
+	if _, ok := p.msgInfo[msgID]; !ok {
+		return "", fmt.Errorf("message %v not registered", msgID)
+	}
+	return msgID, nil
 }
