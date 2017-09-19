@@ -19,6 +19,7 @@ type Skeleton struct {
 	client             *chanrpc.Client
 	server             *chanrpc.Server
 	commandServer      *chanrpc.Server
+	PreFunc            func(ci *chanrpc.CallInfo) bool //处理客户端的消息前处理的函数
 }
 
 func (s *Skeleton) Init() {
@@ -59,6 +60,9 @@ func (s *Skeleton) Run(closeSig chan bool) {
 		case ri := <-s.server.RemoteAsynRet:
 			s.client.ExecRemoveCb(ri)
 		case ci := <-s.server.ChanCall:
+			if !s.Pref(ci) {
+				continue
+			}
 			s.server.Exec(ci)
 		case ci := <-s.commandServer.ChanCall:
 			s.commandServer.Exec(ci)
@@ -68,6 +72,17 @@ func (s *Skeleton) Run(closeSig chan bool) {
 			t.Cb()
 		}
 	}
+}
+
+func (s *Skeleton) Pref(ci *chanrpc.CallInfo) bool {
+	if s.PreFunc != nil {
+		return s.PreFunc(ci)
+	}
+	return true
+}
+
+func (s *Skeleton) SetPref(f func(ci *chanrpc.CallInfo) bool) {
+	s.PreFunc = f
 }
 
 func (s *Skeleton) GetChanAsynRet() chan *chanrpc.RetInfo {

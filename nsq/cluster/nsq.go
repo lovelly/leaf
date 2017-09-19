@@ -4,9 +4,11 @@ import (
 	"errors"
 	"sync"
 
+	"runtime/debug"
+
 	"github.com/lovelly/leaf/log"
-	"github.com/lovelly/leaf/network/gob"
 	"github.com/nsqio/go-nsq"
+	"time"
 )
 
 var (
@@ -15,8 +17,6 @@ var (
 	proclose    bool
 	prolock     sync.Mutex
 	publishChan = make(chan *S2S_NsqMsg, 10000)
-	encoder     = gob.NewEncoder()
-	decoder     = gob.NewDecoder()
 	SelfName    string
 )
 
@@ -64,7 +64,7 @@ func Start(cfg *Cluster_config) {
 	nsqcfg := nsq.NewConfig()
 	nsqcfg.UserAgent = cfg.PdrUserAgent
 	nsqcfg.MaxInFlight = cfg.PdrMaxInFlight
-
+	nsqcfg.DialTimeout = 10 * time.Second
 	log.Debug("at Start Nsq Connect to PdrNsqdAddr %s", cfg.PdrNsqdAddr)
 	if producer, err = nsq.NewProducer(cfg.PdrNsqdAddr, nsqcfg); err != nil {
 		log.Fatal("start nsq client error:%s", err.Error())
@@ -81,6 +81,7 @@ func Start(cfg *Cluster_config) {
 		nsqcfg := nsq.NewConfig()
 		nsqcfg.UserAgent = cfg.CsmUserAgent
 		nsqcfg.MaxInFlight = cfg.CsmMaxInFlight
+		nsqcfg.DialTimeout = 10 * time.Second
 		consumer, err := nsq.NewConsumer(tpc, cfg.Channel, nsqcfg)
 		if err != nil {
 			log.Fatal(" nsq NewConsumer error:%s", err.Error())
@@ -169,9 +170,10 @@ func NewNsqHandler() *nsqHandler {
 
 // HandleMessage - Handles an NSQ message.
 func (h *nsqHandler) HandleMessage(message *nsq.Message) error {
+	//data, err := Processor.Unmarshal(decoder, message.Body)
 	data, err := Processor.Unmarshal(message.Body)
 	if err != nil {
-		log.Error("handler msg error:%s", err.Error())
+		log.Error("handler msg error ===================== :%s %s", err.Error(), data)
 		return nil
 	}
 	msg, ok := data.(*S2S_NsqMsg)
@@ -179,16 +181,21 @@ func (h *nsqHandler) HandleMessage(message *nsq.Message) error {
 		log.Debug("Unmarshal error ")
 		return nil
 	}
-	log.Debug("Cluster IN ==== %s", string(msg.Args))
+	log.Debug("Cluster IN ====%v, %v, SrcServerName:%s, DstServerName:%s", msg.MsgID, msg.Args, msg.SrcServerName, msg.DstServerName)
 	//if msg.CallType == callBroadcast && msg.SrcServerName == SelfName {
 	//	return nil
 	//}
+	defer func() {
+		if err := recover(); err != nil {
+			log.Error("%v \n %s ,%v", err, string(debug.Stack()), *msg)
+		}
+	}()
 
-	switch msg.ReqType {
-	case NsqMsgTypeReq:
-		handleRequestMsg(msg)
+	switch msg.MsgType {
 	case NsqMsgTypeRsp:
 		handleResponseMsg(msg)
+	default:
+		handleRequestMsg(msg)
 	}
 	return nil
 }
@@ -200,6 +207,7 @@ func safePulishg(msg *S2S_NsqMsg) {
 		}
 	}()
 
+	//data, err := Processor.Marshal(encoder, msg)
 	data, err := Processor.Marshal(msg)
 	if err != nil {
 		log.Error("Marshal error at Publish :%s", err.Error())
@@ -210,10 +218,17 @@ func safePulishg(msg *S2S_NsqMsg) {
 		log.Error("error at Publish data is ni")
 		return
 	}
-	log.Debug("Cluster OUT ==== err:%v, data:%s", msg.Err, string(msg.Args))
+	log.Debug("Cluster OUT ====%v, data:%s, DstServerName:%s", msg.MsgID, msg.Args, msg.DstServerName)
+	if msg.Err != "" {
+		log.Debug("Cluster OUT error ====err:%s, ", err)
+	}
 	err = producer.Publish(msg.DstServerName, data[0])
 	if err != nil {
-		log.Error("Publish msg error : %v ", msg)
+		msg.PushCnt++
+		if msg.PushCnt < 2 {
+			safePulishg(msg)
+		}
+		log.Error("Publish msg error : %v ", string(data[0]))
 	}
 }
 

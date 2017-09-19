@@ -4,33 +4,30 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"mj/gameServer/conf"
 	"sync"
-
-	"reflect"
 
 	"github.com/lovelly/leaf/chanrpc"
 	"github.com/lovelly/leaf/log"
-	"github.com/lovelly/leaf/network/json"
+	//"github.com/lovelly/leaf/network/json"
+
+	lgob "github.com/lovelly/leaf/network/gob"
 )
 
 const (
-	callBroadcast = iota
-	callNotForResult
-	callForResult
-)
-
-const (
-	NsqMsgTypeReq = iota
-	NsqMsgTypeRsp
+	NsqMsgTypeRsp          = iota //回应消息
+	NsqMsgTypeBroadcast           //广播消息
+	NsqMsgTypeNotForResult        // 不用回请求的消息
+	NsqMsgTypeForResult           //要回请求的消息
 )
 
 var (
 	routeMap        = map[interface{}]*chanrpc.Client{}
-	Processor       = json.NewProcessor()
+	Processor       = lgob.NewProcessor()
 	RequestInfoLock sync.Mutex
 	requestID       int64
 	requestMap      = make(map[int64]*RequestInfo)
+	encoder         = lgob.NewEncoder()
+	decoder         = lgob.NewDecoder()
 )
 
 type RequestInfo struct {
@@ -40,9 +37,8 @@ type RequestInfo struct {
 }
 
 func init() {
-	gob.Register(map[string]string{})
-	gob.Register(map[string]interface{}{})
 	gob.Register(&S2S_NsqMsg{})
+	gob.Register(&chanrpc.RetInfo{})
 
 	Processor.Register(&S2S_NsqMsg{})
 	Processor.Register(&chanrpc.RetInfo{})
@@ -59,63 +55,46 @@ func SetRouter(msgID interface{}, server *chanrpc.Server) {
 
 type S2S_NsqMsg struct {
 	RequestID     int64
-	ReqType       int
-	CallType      uint8
+	MsgID         interface{}
+	MsgType       uint8
 	SrcServerName string
 	DstServerName string
-	Args          []byte
+	Args          []interface{}
 	Err           string
+	PushCnt       int
 }
 
 func handleRequestMsg(recvMsg *S2S_NsqMsg) {
-	sendMsg := &S2S_NsqMsg{ReqType: NsqMsgTypeRsp, DstServerName: recvMsg.SrcServerName, RequestID: recvMsg.RequestID}
-	if isClose() && recvMsg.CallType == callForResult {
-		sendMsg.Err = fmt.Sprintf("%v server is closing", conf.ServerName)
+	sendMsg := &S2S_NsqMsg{MsgType: NsqMsgTypeRsp, MsgID: "Return", DstServerName: recvMsg.SrcServerName, RequestID: recvMsg.RequestID}
+	if isClose() && recvMsg.MsgType == NsqMsgTypeForResult {
+		sendMsg.Err = fmt.Sprintf("%v server is closing", SelfName)
 		Publish(sendMsg)
 		return
 	}
 
-	msg, err := Processor.Unmarshal(recvMsg.Args)
-	if err != nil && recvMsg.CallType == callForResult {
-		sendMsg.Err = fmt.Sprintf("%v Unmarshal msg error:%s", conf.ServerName, err.Error())
-		Publish(sendMsg)
-		return
-	}
-
-	msgType := reflect.TypeOf(msg)
-	if (msgType == nil || msgType.Kind() != reflect.Ptr) && recvMsg.CallType == callForResult {
-		sendMsg.Err = fmt.Sprintf("json message pointer required")
-		Publish(sendMsg)
-		return
-	}
-
-	msgID := msgType.Elem().Name()
+	msgID := recvMsg.MsgID
 	client, ok := routeMap[msgID]
 	if !ok {
 		err := fmt.Sprintf("%v msg is not set route", msgID)
 		log.Error(err)
 
-		if recvMsg.CallType == callForResult {
+		if recvMsg.MsgType == NsqMsgTypeForResult {
 			sendMsg.Err = err
 			Publish(sendMsg)
 		}
 		return
 	}
 
-	args := []interface{}{msg}
-	if recvMsg.CallType == callForResult {
+	args := recvMsg.Args
+	if recvMsg.MsgType == NsqMsgTypeForResult {
 		sendMsgFunc := func(ret *chanrpc.RetInfo) {
-			data, err := Processor.Marshal(ret.Ret)
-			if err == nil {
-				sendMsg.Args = data[0]
-			} else {
-				log.Error("at handleRequestMsg  Processor.Marshal ret error:%s", err.Error())
-				sendMsg.Err = err.Error()
+			if ret.Ret != nil {
+				sendMsg.Args = []interface{}{ret.Ret}
 			}
-
 			if ret.Err != nil {
 				sendMsg.Err = ret.Err.Error()
 			}
+
 			Publish(sendMsg)
 		}
 
@@ -135,13 +114,10 @@ func handleResponseMsg(msg *S2S_NsqMsg) {
 	}
 
 	ret := &chanrpc.RetInfo{Cb: request.cb}
-	retMsg, err := Processor.Unmarshal(msg.Args)
-	if err != nil {
-		log.Error("handleResponseMsg Unmarshal msg error:%s", err.Error())
-		ret.Err = fmt.Errorf("handleResponseMsg Unmarshal msg error:%s", err.Error())
-		return
+	if len(msg.Args) > 0 {
+		ret.Ret = msg.Args[0]
 	}
-	ret.Ret = retMsg
+
 	if msg.Err != "" {
 		ret.Err = errors.New(msg.Err)
 	}

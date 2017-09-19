@@ -2,8 +2,9 @@ package g
 
 import (
 	"container/list"
-	"github.com/lovelly/leaf/log"
 	"sync"
+
+	"github.com/lovelly/leaf/log"
 )
 
 // one Go per goroutine (goroutine not safe)
@@ -40,8 +41,9 @@ func (g *Go) Go(f func(), cb func()) {
 				log.Recover(r)
 			}
 		}()
-
-		f()
+		if f != nil {
+			f()
+		}
 	}()
 }
 

@@ -46,10 +46,6 @@ func Init() {
 		server.Start()
 	}
 
-	if conf.HeartBeatInterval <= 0 {
-		conf.HeartBeatInterval = 5
-		log.Release("invalid HeartBeatInterval, reset to %v", conf.HeartBeatInterval)
-	}
 }
 
 func AddClient(serverName, addr string) {
@@ -238,7 +234,8 @@ func (a *Agent) Run() {
 		}
 
 		if Processor != nil {
-			msg, err := Processor.Unmarshal(a.decoder, data)
+			//msg, err := Processor.Unmarshal(a.decoder, data)
+			msg, err := Processor.Unmarshal(data)
 			if err != nil {
 				log.Error("unmarshal message error: %v", err)
 				continue
@@ -263,7 +260,8 @@ func (a *Agent) WriteMsg(msg interface{}) {
 	if Processor != nil {
 		log.Debug("cluster OUT = %v", msg)
 		a.encMutex.Lock()
-		data, err := Processor.Marshal(a.encoder, msg)
+		//data, err := Processor.Marshal(a.encoder, msg)
+		data, err := Processor.Marshal(msg)
 		a.encMutex.Unlock()
 		if err != nil {
 			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)

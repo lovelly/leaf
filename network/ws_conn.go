@@ -43,6 +43,7 @@ func newWSConn(conn *websocket.Conn, pendingWriteNum int, maxMsgLen uint32) *WSC
 			case b, ok := <-wsConn.writeChan:
 				conn.SetWriteDeadline(time.Now().Add(writeWait))
 				if b == nil || !ok {
+					log.Debug("write stop msg, send close to client ............... ")
 					conn.WriteMessage(websocket.CloseMessage, []byte{})
 					return
 				}
@@ -56,6 +57,7 @@ func newWSConn(conn *websocket.Conn, pendingWriteNum int, maxMsgLen uint32) *WSC
 			case <-ticker.C:
 				conn.SetWriteDeadline(time.Now().Add(writeWait))
 				if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+					log.Error("ping client error")
 					return
 				}
 			}
@@ -128,10 +130,6 @@ func (wsConn *WSConn) ReadMsg() ([]byte, error) {
 func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 	wsConn.Lock()
 	defer wsConn.Unlock()
-	if wsConn.closeFlag {
-		return nil
-	}
-
 	// get len
 	var msgLen uint32
 	for i := 0; i < len(args); i++ {
@@ -147,10 +145,15 @@ func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 
 	// don't copy
 	if len(args) == 1 {
+		if wsConn.closeFlag {
+			return fmt.Errorf("write msg %s socket is close", string(args[0]))
+		}
+
 		str, err := util.DesEncrypt(args[0], []byte("mqjx@mqc"))
 		if err != nil {
 			return errors.New(fmt.Sprintf("at ws write msg DesEncrypt error :%s", err.Error()))
 		}
+
 
 		wsConn.doWrite(str)
 		return nil
@@ -163,6 +166,11 @@ func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 		copy(msg[l:], args[i])
 		l += len(args[i])
 	}
+
+	if wsConn.closeFlag {
+		return fmt.Errorf("write msg %s socket is close", string(msg))
+	}
+
 	str, err := util.DesEncrypt(msg, []byte("mqjx@mqc"))
 	if err != nil {
 		return errors.New(fmt.Sprintf("at ws write msg DesEncrypt error :%s", err.Error()))

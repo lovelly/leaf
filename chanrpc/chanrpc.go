@@ -43,6 +43,17 @@ type CallInfo struct {
 	cb      interface{}
 }
 
+func (c *CallInfo) GetFid() interface{} {
+	return c.fInfo.id
+}
+
+func (c *CallInfo) GetArgs() []interface{} {
+	return c.args
+}
+func (c *CallInfo) SetArgs(a []interface{}) {
+	c.args = a
+}
+
 func BuildGoCallInfo(f *FuncInfo, args ...interface{}) *CallInfo {
 	return &CallInfo{
 		fInfo: f,
@@ -189,7 +200,7 @@ func (s *Server) Exec(ci *CallInfo) {
 // goroutine safe
 func (s *Server) Go(id interface{}, args ...interface{}) {
 	if s.CloseFlg {
-		log.Error("at Go chan is close %v", id)
+		log.Error("at Go chan is close funcName : =====  %v ", id)
 		return
 	}
 	f := s.functions[id]
@@ -216,7 +227,11 @@ func (s *Server) Call0(id interface{}, args ...interface{}) error {
 		log.Error("at Call0 chan is close %v", id)
 		return errors.New("] send on closed channel")
 	}
-	return s.Open(0).Call0(id, args...)
+	err := s.Open(0).Call0(id, args...)
+	if err != nil {
+		log.Error("call %s faild error:%s", id, err.Error())
+	}
+	return err
 }
 
 // goroutine safe

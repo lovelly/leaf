@@ -3,15 +3,34 @@ package gate
 import (
 	"fmt"
 	"io"
+	"mqjx/server/common/msg"
 	"net"
 	"reflect"
 	"time"
+
+	"regexp"
 
 	"github.com/lovelly/leaf/chanrpc"
 	"github.com/lovelly/leaf/log"
 	"github.com/lovelly/leaf/module"
 	"github.com/lovelly/leaf/network"
 )
+
+var (
+	filter = []string{
+		"C2L_GetRoomList",
+		"L2C_GetRoomList",
+	}
+)
+
+func filterMsg(b []byte) bool {
+	for _, msg := range filter {
+		if ok, _ := regexp.Match(msg, b); ok {
+			return true
+		}
+	}
+	return false
+}
 
 type IdUser interface {
 	GetUid() int64
@@ -51,6 +70,7 @@ type Gate struct {
 }
 
 func (gate *Gate) Run(closeSig chan bool) {
+	time.Sleep(4 * time.Second)
 	newAgent := func(conn network.Conn) network.Agent {
 		a := &agent{conn: conn, gate: gate}
 		if gate.NewChanRPCFunc != nil {
@@ -115,6 +135,7 @@ type agent struct {
 	chanRPC     *chanrpc.Server
 	gate        *Gate
 	userData    interface{}
+	Reason      int
 }
 
 func (a *agent) Run() {
@@ -125,7 +146,7 @@ func (a *agent) Run() {
 		}
 
 		if a.chanRPC != nil {
-			err := a.chanRPC.Call0("CloseAgent", a)
+			err := a.chanRPC.Call0("CloseAgent", a, a.Reason)
 			if err != nil {
 				log.Error("chanrpc error: %v", err)
 			}
@@ -135,7 +156,7 @@ func (a *agent) Run() {
 	handleMsgData := func(args []interface{}) error {
 		if a.gate.Processor != nil {
 			data := args[0].([]byte)
-			msg, err := a.gate.Processor.Unmarshal(data)
+			msg, err := msg.Processor.Unmarshal(data)
 			if err != nil {
 				return err
 			}
@@ -183,14 +204,17 @@ func (a *agent) Run() {
 			userId = user.GetUid()
 		}
 
-		log.Debug("IN msg =: %s, userId:%v", string(data), userId)
+		if !filterMsg(data) {
+			log.Debug("IN msg =: %s, userId:%v", string(data), userId)
+		}
+
 		if a.chanRPC == nil {
 			err = handleMsgData([]interface{}{data})
 		} else {
 			err = a.chanRPC.Call0("handleMsgData", data)
 		}
 		if err != nil {
-			log.Debug("handle message: %v", err)
+			log.Error("handle message: %v", err)
 			break
 		}
 	}
@@ -198,6 +222,10 @@ func (a *agent) Run() {
 
 func (a *agent) OnClose() {
 
+}
+
+func (a *agent) SetReason(r int) {
+	a.Reason = r
 }
 
 func (a *agent) WriteMsg(msg interface{}) {
@@ -214,10 +242,13 @@ func (a *agent) WriteMsg(msg interface{}) {
 		} else if user, ok1 := a.userData.(IdUser); ok1 {
 			userId = user.GetUid()
 		}
-		log.Debug("OUT msg =: %s, userId:%v", string(data[0]), userId)
+		if !filterMsg(data[0]) {
+			log.Debug("OUT msg =: %s, userId:%v", string(data[0]), userId)
+		}
+
 		err = a.conn.WriteMsg(data...)
 		if err != nil {
-			log.Error("write message %v error: %v", reflect.TypeOf(msg), err)
+			log.Error("write message %v error: %v，userId: %v", reflect.TypeOf(msg), err, userId)
 		}
 	}
 }
