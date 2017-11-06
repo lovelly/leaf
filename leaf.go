@@ -17,7 +17,7 @@ var (
 
 func Run(mods ...module.Module) {
 	log.Release("Leaf %v starting up", version)
-
+	log.CloseSvr = Close
 	// module
 	for i := 0; i < len(mods); i++ {
 		module.Register(mods[i])
@@ -29,13 +29,15 @@ func Run(mods ...module.Module) {
 
 	// console
 	console.Init()
-
 	// close
-	c := make(chan os.Signal, 1)
+	c := make(chan os.Signal, 5)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	sig := <-c
 	log.Release("Leaf closing down (signal: %v)", sig)
+	Close()
+}
 
+func Close() {
 	if OnDestroy != nil {
 		OnDestroy()
 	}

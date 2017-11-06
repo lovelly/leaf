@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+var (
+	CloseSvr func()
+)
+
 // levels
 const (
 	debugLevel   = 0
@@ -104,6 +108,10 @@ func (logger *Logger) doPrintf(level int, printLevel string, format string, a ..
 	logger.baseLogger.Output(3, fmt.Sprintf(format, a...))
 
 	if level == fatalLevel {
+		if CloseSvr != nil {
+			Debug("afert fatal, begin shuwt server ............................")
+			CloseSvr()
+		}
 		os.Exit(1)
 	}
 }
