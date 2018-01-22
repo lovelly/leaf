@@ -88,6 +88,7 @@ func New(strLevel string, pathname string, flag int) (*Logger, error) {
 
 // It's dangerous to call the method on logging
 func (logger *Logger) Close() {
+	logger.Debug("begin close logger")
 	if logger.baseFile != nil {
 		logger.baseFile.Close()
 	}
@@ -101,7 +102,8 @@ func (logger *Logger) doPrintf(level int, printLevel string, format string, a ..
 		return
 	}
 	if logger.baseLogger == nil {
-		panic("logger closed")
+		log.Println("logger closed .......................")
+		return
 	}
 
 	format = printLevel + format
@@ -109,10 +111,16 @@ func (logger *Logger) doPrintf(level int, printLevel string, format string, a ..
 
 	if level == fatalLevel {
 		if CloseSvr != nil {
+			go func() {
+				time.AfterFunc(8*time.Second, func() { os.Exit(-1) })
+			}()
 			Debug("afert fatal, begin shuwt server ............................")
 			CloseSvr()
+			os.Exit(-1)
+		} else {
+			Debug("afert fatal, begin shuwt server ............................")
+			os.Exit(-1)
 		}
-		os.Exit(1)
 	}
 }
 

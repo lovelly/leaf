@@ -1,10 +1,11 @@
 package network
 
 import (
-	"github.com/lovelly/leaf/log"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/lovelly/leaf/log"
 )
 
 type TCPServer struct {
@@ -57,7 +58,7 @@ func (server *TCPServer) init() {
 	msgParser.SetMsgLen(server.LenMsgLen, server.MinMsgLen, server.MaxMsgLen)
 	msgParser.SetByteOrder(server.LittleEndian)
 	server.msgParser = msgParser
-	log.Debug("TCPServer listen ok, addr:%s",server.Addr)
+	log.Debug("TCPServer listen ok, addr:%s", server.Addr)
 }
 
 func (server *TCPServer) run() {

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/lovelly/leaf/log"
 	//"github.com/lovelly/leaf/network/json"
 
+	"github.com/lovelly/leaf/gameError"
 	lgob "github.com/lovelly/leaf/network/gob"
 )
 
@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	routeMap        = map[interface{}]*chanrpc.Client{}
+	routeMap        = map[string]*chanrpc.Server{}
 	Processor       = lgob.NewProcessor()
 	RequestInfoLock sync.Mutex
 	requestID       int64
@@ -44,18 +44,18 @@ func init() {
 	Processor.Register(&chanrpc.RetInfo{})
 }
 
-func SetRouter(msgID interface{}, server *chanrpc.Server) {
+func SetRouter(msgID string, server *chanrpc.Server) {
 	_, ok := routeMap[msgID]
 	if ok {
 		panic(fmt.Sprintf("function id %v: already set route", msgID))
 	}
 
-	routeMap[msgID] = server.Open(0)
+	routeMap[msgID] = server
 }
 
 type S2S_NsqMsg struct {
 	RequestID     int64
-	MsgID         interface{}
+	MsgID         string
 	MsgType       uint8
 	SrcServerName string
 	DstServerName string
@@ -87,22 +87,21 @@ func handleRequestMsg(recvMsg *S2S_NsqMsg) {
 
 	args := recvMsg.Args
 	if recvMsg.MsgType == NsqMsgTypeForResult {
-		sendMsgFunc := func(ret *chanrpc.RetInfo) {
-			if ret.Ret != nil {
-				sendMsg.Args = []interface{}{ret.Ret}
+		sendMsgFunc := func(ret interface{}, err error) {
+			if ret != nil {
+				sendMsg.Args = []interface{}{ret}
 			}
-			if ret.Err != nil {
-				sendMsg.Err = ret.Err.Error()
+			if err != nil {
+				sendMsg.Err = err.Error()
 			}
 
 			Publish(sendMsg)
 		}
 
 		args = append(args, sendMsgFunc)
-		client.RpcCall(msgID, args...)
+		client.AsynCall(nil, msgID, args...)
 	} else {
-		args = append(args, nil)
-		client.RpcCall(msgID, args...)
+		client.Go(msgID, args...)
 	}
 }
 
@@ -119,7 +118,7 @@ func handleResponseMsg(msg *S2S_NsqMsg) {
 	}
 
 	if msg.Err != "" {
-		ret.Err = errors.New(msg.Err)
+		ret.Err = gameError.RenderServerError(msg.Err)
 	}
 	request.chanRet <- ret
 }

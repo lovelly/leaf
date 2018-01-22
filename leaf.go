@@ -4,7 +4,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/lovelly/leaf/cluster"
+	//"github.com/lovelly/leaf/cluster"
 	"github.com/lovelly/leaf/conf"
 	"github.com/lovelly/leaf/console"
 	"github.com/lovelly/leaf/log"
@@ -25,7 +25,7 @@ func Run(mods ...module.Module) {
 	module.Init()
 
 	// cluster
-	cluster.Init()
+	//cluster.Init()
 
 	// console
 	console.Init()
@@ -41,8 +41,11 @@ func Close() {
 	if OnDestroy != nil {
 		OnDestroy()
 	}
+	log.Debug("begin close console")
 	console.Destroy()
-	cluster.Destroy()
+	log.Debug("begin close cluster")
+	//cluster.Destroy()
+	log.Debug("begin close module")
 	module.Destroy()
 	log.Close()
 }

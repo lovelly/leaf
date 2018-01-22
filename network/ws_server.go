@@ -45,12 +45,18 @@ type WSHandler struct {
 	conns           WebsocketConnSet
 	mutexConns      sync.Mutex
 	wg              sync.WaitGroup
+	Close           bool
 }
 
 func (handler *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Debug("WSHandler new conn remoteArrd:%s", r.RemoteAddr)
 	if r.Method != "GET" || conf.Shutdown {
 		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	if conf.Shutdown {
+		log.Error("ServeHTTP server Shutdown")
 		return
 	}
 
@@ -163,7 +169,6 @@ func (server *WSServer) Start() {
 
 func (server *WSServer) Close() {
 	server.ln.Close()
-
 	server.handler.mutexConns.Lock()
 	for conn := range server.handler.conns {
 		conn.Close()

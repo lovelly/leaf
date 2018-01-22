@@ -157,7 +157,7 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 		i.msgHandler([]interface{}{msg, userData})
 	}
 	if i.msgRouter != nil {
-		i.msgRouter.Go(msgType, msg, userData)
+		i.msgRouter.Go(msgID, msg, userData)
 	} else if i.msgHandler == nil {
 		log.Error("%v msg without any handler", msgID)
 	}
@@ -228,7 +228,6 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	log.Debug("read msf is == %s", msgID)
 	i, ok := p.msgInfo[msgID]
 	if !ok {
 		return nil, fmt.Errorf("message %v not registered", msgID)

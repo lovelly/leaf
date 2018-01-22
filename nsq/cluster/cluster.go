@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/gameError"
 	"github.com/lovelly/leaf/log"
 )
 
@@ -51,7 +52,7 @@ func RemoveClient(serverName string) {
 				return
 			}
 			ret := &chanrpc.RetInfo{Ret: nil, Cb: request.cb}
-			ret.Err = fmt.Errorf("at call %s server is close", serverName)
+			ret.Err = gameError.RenderServerError(fmt.Sprintf("at call %s server is close", serverName))
 			request.chanRet <- ret
 			delete(requestMap, id)
 		})
@@ -59,18 +60,18 @@ func RemoveClient(serverName string) {
 	}
 }
 
-func Broadcast(serverName string, id interface{}, args ...interface{}) {
+func Broadcast(serverName string, id string, args ...interface{}) {
 	msg := &S2S_NsqMsg{MsgType: NsqMsgTypeBroadcast, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
 	Publish(msg)
 }
 
-func Go(serverName string, id interface{}, args ...interface{}) {
+func Go(serverName string, id string, args ...interface{}) {
 	msg := &S2S_NsqMsg{MsgType: NsqMsgTypeNotForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
 	Publish(msg)
 }
 
 //timeOutCall 会丢弃执行结果
-func TimeOutCall1(serverName string, t time.Duration, id interface{}, args ...interface{}) (interface{}, error) {
+func TimeOutCall1(serverName string, t time.Duration, id string, args ...interface{}) (interface{}, error) {
 	if !HasClient(serverName) {
 		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
 	}
@@ -83,14 +84,14 @@ func TimeOutCall1(serverName string, t time.Duration, id interface{}, args ...in
 	Publish(msg)
 	select {
 	case ri := <-chanSyncRet:
-		return ri.Ret, ri.Err
+		return ri.Ret, ri.Err.ToSysError()
 	case <-time.After(time.Second * t):
 		popRequest(requestID)
 		return nil, errors.New(fmt.Sprintf("time out at TimeOutCall1 msg: %v", args))
 	}
 }
 
-func Call0(serverName string, id interface{}, args ...interface{}) error {
+func Call0(serverName string, id string, args ...interface{}) error {
 	if !HasClient(serverName) {
 		return fmt.Errorf("TimeOutCall1 %s is off line", serverName)
 	}
@@ -102,10 +103,10 @@ func Call0(serverName string, id interface{}, args ...interface{}) error {
 	Publish(msg)
 
 	ri := <-chanSyncRet
-	return ri.Err
+	return ri.Err.ToSysError()
 }
 
-func Call1(serverName string, id interface{}, args ...interface{}) (interface{}, error) {
+func Call1(serverName string, id string, args ...interface{}) (interface{}, error) {
 	if !HasClient(serverName) {
 		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
 	}
@@ -118,32 +119,16 @@ func Call1(serverName string, id interface{}, args ...interface{}) (interface{},
 	Publish(msg)
 
 	ri := <-chanSyncRet
-	return ri.Ret, ri.Err
+	return ri.Ret, ri.Err.ToSysError()
 }
 
-func CallN(serverName string, id interface{}, args ...interface{}) ([]interface{}, error) {
-	if !HasClient(serverName) {
-		return nil, fmt.Errorf("TimeOutCall1 %s is off line", serverName)
-	}
-
-	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
-
-	request := &RequestInfo{chanRet: chanSyncRet, serverName: serverName}
-	requestID := registerRequest(request)
-	msg := &S2S_NsqMsg{RequestID: requestID, MsgType: NsqMsgTypeForResult, MsgID: id, SrcServerName: SelfName, DstServerName: serverName, Args: args}
-	Publish(msg)
-
-	ri := <-chanSyncRet
-	return chanrpc.Assert(ri.Ret), ri.Err
-}
-
-func AsynCall(serverName string, chanAsynRet chan *chanrpc.RetInfo, id interface{}, args ...interface{}) {
+func AsynCall(serverName string, chanAsynRet chan *chanrpc.RetInfo, id string, args ...interface{}) {
 	lastIndex := len(args) - 1
 	cb := args[lastIndex]
 	args = args[:lastIndex]
 
 	if !HasClient(serverName) {
-		ret := &chanrpc.RetInfo{Cb: cb, Err: fmt.Errorf("AsynCall %s is off line", serverName)}
+		ret := &chanrpc.RetInfo{Cb: cb, Err: gameError.RenderServerError(fmt.Sprintf("AsynCall %s is off line", serverName))}
 		chanAsynRet <- ret
 		return
 	}

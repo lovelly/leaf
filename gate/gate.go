@@ -1,16 +1,19 @@
 package gate
 
 import (
-	"fmt"
 	"io"
 	"mqjx/server/common/msg"
 	"net"
 	"reflect"
+	"regexp"
+	"strings"
+	"sync"
 	"time"
 
-	"regexp"
+	"runtime/debug"
 
 	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/conf"
 	"github.com/lovelly/leaf/log"
 	"github.com/lovelly/leaf/module"
 	"github.com/lovelly/leaf/network"
@@ -18,8 +21,8 @@ import (
 
 var (
 	filter = []string{
-		"C2L_GetRoomList",
-		"L2C_GetRoomList",
+	/*"C2L_GetRoomList",
+	"L2C_GetRoomList",*/
 	}
 )
 
@@ -70,7 +73,6 @@ type Gate struct {
 }
 
 func (gate *Gate) Run(closeSig chan bool) {
-	time.Sleep(4 * time.Second)
 	newAgent := func(conn network.Conn) network.Agent {
 		a := &agent{conn: conn, gate: gate}
 		if gate.NewChanRPCFunc != nil {
@@ -128,6 +130,9 @@ func (gate *Gate) Run(closeSig chan bool) {
 }
 
 func (gate *Gate) OnDestroy() {}
+func NewAgent() *agent {
+	return new(agent)
+}
 
 type agent struct {
 	conn        network.Conn
@@ -136,17 +141,17 @@ type agent struct {
 	gate        *Gate
 	userData    interface{}
 	Reason      int
+	sync.Mutex
 }
 
 func (a *agent) Run() {
-	fmt.Println("at aget run .... ")
 	defer func() {
 		if r := recover(); r != nil {
 			log.Recover(r)
 		}
 
 		if a.chanRPC != nil {
-			err := a.chanRPC.Call0("CloseAgent", a, a.Reason)
+			_, err := a.chanRPC.Call("CloseAgent", a, a.Reason)
 			if err != nil {
 				log.Error("chanrpc error: %v", err)
 			}
@@ -197,6 +202,10 @@ func (a *agent) Run() {
 			}
 			break
 		}
+		if conf.Shutdown {
+			log.Error("read msg server shut down")
+			return
+		}
 		var userId int64
 		var ok bool
 		if userId, ok = a.userData.(int64); ok {
@@ -228,11 +237,11 @@ func (a *agent) SetReason(r int) {
 	a.Reason = r
 }
 
-func (a *agent) WriteMsg(msg interface{}) {
+func (a *agent) WriteMsg(msg interface{}, id ...string) {
 	if a.gate.Processor != nil {
-		data, err := a.gate.Processor.Marshal(msg)
+		data, err := a.gate.Processor.Marshal(msg, id...)
 		if err != nil {
-			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)
+			log.Error("marshal message %v error: %v, %v", msg, err, string(debug.Stack()))
 			return
 		}
 
@@ -248,7 +257,7 @@ func (a *agent) WriteMsg(msg interface{}) {
 
 		err = a.conn.WriteMsg(data...)
 		if err != nil {
-			log.Error("write message %v error: %v，userId: %v", reflect.TypeOf(msg), err, userId)
+			log.Error("write message %v error: %v，userId: %v", reflect.TypeOf(msg), err.Error(), userId)
 		}
 	}
 }
@@ -261,7 +270,26 @@ func (a *agent) RemoteAddr() net.Addr {
 	return a.conn.RemoteAddr()
 }
 
-func (a *agent) Close() {
+func (a *agent) RemoteIP() string {
+	list := strings.Split(a.RemoteAddr().String(), ":")
+	if len(list) > 0 {
+		return list[0]
+	}
+	return ""
+}
+
+func (a *agent) Close(Reason int) {
+	a.Lock()
+	defer a.Unlock()
+	a.SetReason(Reason)
+	if a.chanRPC != nil {
+		_, err := a.chanRPC.TimeOutCall("CloseAgent", 3*time.Second, a, a.Reason)
+		if err != nil {
+			log.Error("chanrpc error: %v", err)
+		}
+		a.chanRPC = nil
+	}
+
 	a.conn.Close()
 }
 

@@ -154,7 +154,6 @@ func (wsConn *WSConn) WriteMsg(args ...[]byte) error {
 			return errors.New(fmt.Sprintf("at ws write msg DesEncrypt error :%s", err.Error()))
 		}
 
-
 		wsConn.doWrite(str)
 		return nil
 	}

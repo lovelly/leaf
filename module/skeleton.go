@@ -4,9 +4,10 @@ import (
 	"time"
 
 	"github.com/lovelly/leaf/chanrpc"
-	"github.com/lovelly/leaf/console"
 	"github.com/lovelly/leaf/go"
+	"github.com/lovelly/leaf/log"
 	"github.com/lovelly/leaf/timer"
+	"github.com/robfig/cron"
 )
 
 type Skeleton struct {
@@ -16,10 +17,8 @@ type Skeleton struct {
 	ChanRPCServer      *chanrpc.Server
 	g                  *g.Go
 	dispatcher         *timer.Dispatcher
-	client             *chanrpc.Client
 	server             *chanrpc.Server
-	commandServer      *chanrpc.Server
-	PreFunc            func(ci *chanrpc.CallInfo) bool //处理客户端的消息前处理的函数
+	cronChan           chan func()
 }
 
 func (s *Skeleton) Init() {
@@ -30,63 +29,52 @@ func (s *Skeleton) Init() {
 		s.TimerDispatcherLen = 0
 	}
 	if s.AsynCallLen <= 0 {
-		s.AsynCallLen = 0
+		s.AsynCallLen = 100
 	}
 
 	s.g = g.New(s.GoLen)
 	s.dispatcher = timer.NewDispatcher(s.TimerDispatcherLen)
-	s.client = chanrpc.NewClient(s.AsynCallLen)
 	s.server = s.ChanRPCServer
+	s.cronChan = make(chan func(), 1)
 
 	if s.server == nil {
-		s.server = chanrpc.NewServer(0)
+		s.server = chanrpc.NewServer(s.AsynCallLen)
 	}
-	s.commandServer = chanrpc.NewServer(0)
 }
 
 func (s *Skeleton) Run(closeSig chan bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+			if !s.server.Idle() {
+				go s.Run(closeSig)
+			}
+		}
+	}()
 	for {
 		select {
 		case <-closeSig:
-			s.commandServer.Close()
 			s.server.Close()
-			for !s.g.Idle() || !s.client.Idle() {
+			for !s.g.Idle() {
 				s.g.Close()
-				s.client.Close()
 			}
 			return
-		case ri := <-s.client.ChanAsynRet:
-			s.client.Cb(ri)
-		case ri := <-s.server.RemoteAsynRet:
-			s.client.ExecRemoveCb(ri)
+		case ri := <-s.server.AsynRet:
+			s.server.ExecRemoveCb(ri)
 		case ci := <-s.server.ChanCall:
-			if !s.Pref(ci) {
-				continue
-			}
 			s.server.Exec(ci)
-		case ci := <-s.commandServer.ChanCall:
-			s.commandServer.Exec(ci)
 		case cb := <-s.g.ChanCb:
 			s.g.Cb(cb)
 		case t := <-s.dispatcher.ChanTimer:
 			t.Cb()
+		case f := <-s.cronChan:
+			f()
 		}
 	}
 }
 
-func (s *Skeleton) Pref(ci *chanrpc.CallInfo) bool {
-	if s.PreFunc != nil {
-		return s.PreFunc(ci)
-	}
-	return true
-}
-
-func (s *Skeleton) SetPref(f func(ci *chanrpc.CallInfo) bool) {
-	s.PreFunc = f
-}
-
 func (s *Skeleton) GetChanAsynRet() chan *chanrpc.RetInfo {
-	return s.server.RemoteAsynRet
+	return s.server.AsynRet
 }
 
 func (s *Skeleton) AfterFunc(d time.Duration, cb func()) *timer.Timer {
@@ -97,12 +85,36 @@ func (s *Skeleton) AfterFunc(d time.Duration, cb func()) *timer.Timer {
 	return s.dispatcher.AfterFunc(d, cb)
 }
 
-func (s *Skeleton) CronFunc(cronExpr *timer.CronExpr, cb func()) *timer.Cron {
-	if s.TimerDispatcherLen == 0 {
-		panic("invalid TimerDispatcherLen")
-	}
+/*
+	Field name   | Mandatory? | Allowed values  | Allowed special characters
+	----------   | ---------- | --------------  | --------------------------
+	Seconds      | Yes        | 0-59            | * / , -
+	Minutes      | Yes        | 0-59            | * / , -
+	Hours        | Yes        | 0-23            | * / , -
+	Day of month | Yes        | 1-31            | * / , - ?
+	Month        | Yes        | 1-12 or JAN-DEC | * / , -
+	Day of week  | Yes        | 0-6 or SUN-SAT  | * / , - ?
+*/
 
-	return s.dispatcher.CronFunc(cronExpr, cb)
+//每隔5秒执行一次：*/5 * * * * ?
+//每隔1分钟执行一次：0 */1 * * * ?
+//每天23点执行一次：0 0 23 * * ?
+//每天凌晨1点执行一次：0 0 1 * * ?
+//每月1号凌晨1点执行一次：0 0 1 1 * ?
+//在26分、29分、33分执行一次：0 26,29,33 * * * ?
+//每天的0点、13点、18点、21点都执行一次：0 0 0,13,18,21 * * ?
+
+func (s *Skeleton) CronFunc(spec string, cb func()) *cron.Cron {
+	cron := cron.New()
+	err := cron.AddFunc(spec, func() {
+		s.cronChan <- cb
+	})
+	if err != nil {
+		log.Error("CronFunc error : %s", err.Error())
+		return nil
+	}
+	cron.Start()
+	return cron
 }
 
 func (s *Skeleton) Go(f func(), cb func()) {
@@ -119,25 +131,4 @@ func (s *Skeleton) NewLinearContext() *g.LinearContext {
 	}
 
 	return s.g.NewLinearContext()
-}
-
-func (s *Skeleton) AsynCall(server *chanrpc.Server, id interface{}, args ...interface{}) {
-	if s.AsynCallLen == 0 {
-		panic("invalid AsynCallLen")
-	}
-
-	s.client.Attach(server)
-	s.client.AsynCall(id, args...)
-}
-
-func (s *Skeleton) RegisterChanRPC(id interface{}, f interface{}) {
-	if s.ChanRPCServer == nil {
-		panic("invalid ChanRPCServer")
-	}
-
-	s.server.Register(id, f)
-}
-
-func (s *Skeleton) RegisterCommand(name string, help string, f interface{}) {
-	console.Register(name, help, f, s.commandServer)
 }

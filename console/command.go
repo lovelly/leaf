@@ -2,14 +2,15 @@ package console
 
 import (
 	"fmt"
-	"github.com/lovelly/leaf/chanrpc"
-	"github.com/lovelly/leaf/conf"
-	"github.com/lovelly/leaf/log"
 	"os"
 	"path"
 	"runtime/pprof"
-	"time"
 	"strings"
+	"time"
+
+	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/conf"
+	"github.com/lovelly/leaf/log"
 )
 
 var commands = []Command{
@@ -56,7 +57,7 @@ func (c *ExternalCommand) run(_args []string) string {
 		args[i] = v
 	}
 
-	ret, err := c.server.Call1(c._name, args...)
+	ret, err := c.server.Call(c._name, args...)
 	if err != nil {
 		return err.Error()
 	}

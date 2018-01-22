@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-
+	"runtime"
 	"runtime/debug"
 
 	"github.com/lovelly/leaf/chanrpc"
+	"github.com/lovelly/leaf/gameError"
 	"github.com/lovelly/leaf/log"
 )
 
@@ -17,18 +18,11 @@ type Processor struct {
 }
 
 type MsgInfo struct {
-	msgType       reflect.Type
-	msgRouter     *chanrpc.Server
-	msgHandler    MsgHandler
-	msgRawHandler MsgHandler
+	msgType    reflect.Type
+	msgRouter  *chanrpc.Server
+	msgHandler MsgHandler
 }
-
-type MsgHandler func([]interface{})
-
-type MsgRaw struct {
-	msgID      string
-	msgRawData json.RawMessage
-}
+type MsgHandler func([]interface{}) interface{}
 
 func NewProcessor() *Processor {
 	p := new(Processor)
@@ -86,35 +80,8 @@ func (p *Processor) SetHandler(msg interface{}, msgHandler MsgHandler) {
 	i.msgHandler = msgHandler
 }
 
-// It's dangerous to call the method on routing or marshaling (unmarshaling)
-func (p *Processor) SetRawHandler(msg interface{}, msgRawHandler MsgHandler) {
-	msgType := reflect.TypeOf(msg)
-	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		log.Fatal("json message pointer required", string(debug.Stack()))
-	}
-	msgID := msgType.Elem().Name()
-	i, ok := p.msgInfo[msgID]
-	if !ok {
-		log.Fatal("message %v not registered", msgID)
-	}
-
-	i.msgRawHandler = msgRawHandler
-}
-
 // goroutine safe
 func (p *Processor) Route(msg interface{}, userData interface{}) error {
-	// raw
-	if msgRaw, ok := msg.(MsgRaw); ok {
-		i, ok := p.msgInfo[msgRaw.msgID]
-		if !ok {
-			return fmt.Errorf("at Route message %v not registered", msgRaw.msgID)
-		}
-		if i.msgRawHandler != nil {
-			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgRawData, userData})
-		}
-		return nil
-	}
-
 	// json
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
@@ -123,47 +90,55 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		return fmt.Errorf("at Route 11 message %v not registered", msgID)
+		return fmt.Errorf("at RouteByType 11 message %v not registered", msgID)
 	}
 	if i.msgHandler != nil {
 		i.msgHandler([]interface{}{msg, userData})
-	}
-	if i.msgRouter != nil {
-		i.msgRouter.Go(msgType, msg, userData)
-	} else if i.msgHandler == nil {
+	} else if i.msgRouter != nil {
+		i.msgRouter.Go(msgID, msg, userData)
+	} else {
 		log.Error("%v msg without any handler", msgID)
 	}
 	return nil
 }
 
 // goroutine safe
-func (p *Processor) RouteByType(msgType reflect.Type, msg interface{}, userData interface{}) error {
-	// raw
-	if msgRaw, ok := msg.(MsgRaw); ok {
-		i, ok := p.msgInfo[msgRaw.msgID]
-		if !ok {
-			return fmt.Errorf("at RouteByTypemessage %v not registered ", msgRaw.msgID)
-		}
-		if i.msgRawHandler != nil {
-			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgRawData, userData})
-		}
-		return nil
-	}
-
-	msgID := msgType.Elem().Name()
+func (p *Processor) RouteByID(msgID string, msg interface{}, userData interface{}, cb func(interface{}, *gameError.ErrCode)) {
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		return fmt.Errorf("at RouteByType 11 message %v not registered", msgID)
+		cb(nil, &gameError.ErrCode{ErrorCode: 0xFFFFFFFF, DescribeString: "not found msg id" + msgID})
+		return
 	}
 	if i.msgHandler != nil {
-		i.msgHandler([]interface{}{msg, userData})
-	}
-	if i.msgRouter != nil {
-		i.msgRouter.Go(msgType, msg, userData)
-	} else if i.msgHandler == nil {
+		p.callHandler(i.msgHandler, []interface{}{msg, userData}, cb)
+	} else if i.msgRouter != nil {
+		i.msgRouter.AsynCall(nil, msgID, msg, userData, cb)
+	} else {
 		log.Error("%v msg without any handler", msgID)
 	}
-	return nil
+	return
+}
+
+func (p *Processor) callHandler(h MsgHandler, args []interface{}, cb func(interface{}, *gameError.ErrCode)) {
+	defer func() {
+		if err := recover(); err != nil {
+			switch err.(type) {
+			case *gameError.ErrCode:
+				cb(nil, err.(*gameError.ErrCode))
+			case error:
+				cb(nil, &gameError.ErrCode{ErrorCode: 0xFFFFFFFF, DescribeString: err.(error).Error()})
+			case runtime.Error:
+				cb(nil, &gameError.ErrCode{ErrorCode: 0xFFFFFFFF, DescribeString: err.(runtime.Error).Error()})
+			}
+		}
+	}()
+	ret := h(args)
+	switch ret.(type) {
+	case *gameError.ErrCode:
+		cb(nil, ret.(*gameError.ErrCode))
+	default:
+		cb(ret, nil)
+	}
 }
 
 // goroutine safe
@@ -182,32 +157,54 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 		if !ok {
 			return nil, fmt.Errorf("at json Unmarshal message %v not registered", msgID)
 		}
-
-		// msg
-		if i.msgRawHandler != nil {
-			return MsgRaw{msgID, data}, nil
-		} else {
-			msg := reflect.New(i.msgType.Elem()).Interface()
-			return msg, json.Unmarshal(data, msg)
-		}
+		msg := reflect.New(i.msgType.Elem()).Interface()
+		return msg, json.Unmarshal(data, msg)
 	}
 
 	panic("bug")
 }
 
 // goroutine safe
-func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
-	msgType := reflect.TypeOf(msg)
-	if msgType == nil || msgType.Kind() != reflect.Ptr {
-		return nil, fmt.Errorf("json message pointer required cur:%s", msgType.String())
-	}
-	msgID := msgType.Elem().Name()
-	if _, ok := p.msgInfo[msgID]; !ok {
-		return nil, fmt.Errorf("at json Marshal message %v not registered", msgID)
+func (p *Processor) Marshal(msg interface{}, id ...string) ([][]byte, error) {
+	var msgID string
+	if len(id) > 0 {
+		msgID = id[0]
+	} else {
+		msgType := reflect.TypeOf(msg)
+		if msgType == nil || (msgType.Kind() != reflect.Ptr && msgType.Kind() != reflect.Map) {
+			return nil, fmt.Errorf("json message pointer required cur:%s", msgType.String())
+		}
+		msgID = msgType.Elem().Name()
+		if _, ok := p.msgInfo[msgID]; !ok {
+			return nil, fmt.Errorf("at json Marshal message %v not registered", msgID)
+		}
 	}
 
+	var errCode *gameError.ErrCode
+	switch msg.(type) {
+	case nil:
+	case *gameError.ErrCode:
+		errCode = msg.(*gameError.ErrCode)
+	case error:
+		errCode = &gameError.ErrCode{}
+		errCode.DescribeString = msg.(error).Error()
+		errCode.ErrorCode = 0xFFFFFFFF
+	case runtime.Error:
+		errCode = &gameError.ErrCode{}
+		errCode.DescribeString = msg.(runtime.Error).Error()
+		errCode.ErrorCode = 0xFFFFFFFF
+	default:
+
+	}
 	// data
-	m := map[string]interface{}{msgID: msg}
+	m := map[string]interface{}{}
+	m["Name"] = msgID
+	if errCode != nil {
+		m["Error"] = errCode
+	} else if msg != nil {
+		m["Data"] = msg
+	}
+
 	data, err := json.Marshal(m)
 	return [][]byte{data}, err
 }

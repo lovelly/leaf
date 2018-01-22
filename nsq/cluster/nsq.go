@@ -2,13 +2,15 @@ package cluster
 
 import (
 	"errors"
-	"sync"
-
+	"runtime"
 	"runtime/debug"
+	"sync"
+	"time"
+
+	"encoding/json"
 
 	"github.com/lovelly/leaf/log"
 	"github.com/nsqio/go-nsq"
-	"time"
 )
 
 var (
@@ -156,7 +158,13 @@ func publishLoop() {
 				log.Debug("at publishLoop msg is nil ... ")
 				continue
 			}
-			safePulishg(msg)
+			err := safePulishg(msg)
+			if err != nil {
+				msg.Err = err.Error()
+				msg.MsgType = NsqMsgTypeRsp
+				msg.Args = msg.Args[0:0]
+				handleResponseMsg(msg)
+			}
 		}
 	}
 }
@@ -170,6 +178,9 @@ func NewNsqHandler() *nsqHandler {
 
 // HandleMessage - Handles an NSQ message.
 func (h *nsqHandler) HandleMessage(message *nsq.Message) error {
+	if message.Timestamp+3600 < time.Now().Unix() {
+		return nil
+	}
 	//data, err := Processor.Unmarshal(decoder, message.Body)
 	data, err := Processor.Unmarshal(message.Body)
 	if err != nil {
@@ -181,7 +192,9 @@ func (h *nsqHandler) HandleMessage(message *nsq.Message) error {
 		log.Debug("Unmarshal error ")
 		return nil
 	}
-	log.Debug("Cluster IN ====%v, %v, SrcServerName:%s, DstServerName:%s", msg.MsgID, msg.Args, msg.SrcServerName, msg.DstServerName)
+
+	str, _ := json.Marshal(msg.Args)
+	log.Debug("Cluster IN ====name:%v, args:%v, SrcServerName:%s, DstServerName:%s", msg.MsgID, string(str), msg.SrcServerName, msg.DstServerName)
 	//if msg.CallType == callBroadcast && msg.SrcServerName == SelfName {
 	//	return nil
 	//}
@@ -200,10 +213,14 @@ func (h *nsqHandler) HandleMessage(message *nsq.Message) error {
 	return nil
 }
 
-func safePulishg(msg *S2S_NsqMsg) {
+func safePulishg(msg *S2S_NsqMsg) (err error) {
 	defer func() {
-		if err := recover(); err != nil {
-			log.Error("Publish msg recover error : %s, topc :%v ", msg)
+		if err1 := recover(); err != nil {
+			switch err1.(type) {
+			case runtime.Error:
+				err = err1.(error)
+			}
+			log.Error("Publish msg recover error : %s, topc :%v ", err.Error(), msg)
 		}
 	}()
 
@@ -211,25 +228,28 @@ func safePulishg(msg *S2S_NsqMsg) {
 	data, err := Processor.Marshal(msg)
 	if err != nil {
 		log.Error("Marshal error at Publish :%s", err.Error())
-		return
+		return err
 	}
 
 	if len(data) < 1 {
 		log.Error("error at Publish data is ni")
-		return
+		return errors.New("error at Publish data is ni")
 	}
-	log.Debug("Cluster OUT ====%v, data:%s, DstServerName:%s", msg.MsgID, msg.Args, msg.DstServerName)
+	str, _ := json.Marshal(msg.Args)
+	log.Debug("Cluster OUT ====name:%v, args:%s,SrcServerName:%s, DstServerName:%s", msg.MsgID, string(str), msg.SrcServerName, msg.DstServerName)
 	if msg.Err != "" {
-		log.Debug("Cluster OUT error ====err:%s, ", err)
+		log.Debug("Cluster OUT error ====err:%s, ", msg.Err)
 	}
 	err = producer.Publish(msg.DstServerName, data[0])
 	if err != nil {
 		msg.PushCnt++
 		if msg.PushCnt < 2 {
-			safePulishg(msg)
+			return safePulishg(msg)
+		} else {
+			return err
 		}
-		log.Error("Publish msg error : %v ", string(data[0]))
 	}
+	return nil
 }
 
 func getLogLovel(loglv string) nsq.LogLevel {

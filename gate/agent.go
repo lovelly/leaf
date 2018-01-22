@@ -8,11 +8,11 @@ import (
 )
 
 type Agent interface {
-	WriteMsg(msg interface{})
+	WriteMsg(msg interface{}, id ...string)
 	LocalAddr() net.Addr
 	RemoteAddr() net.Addr
-	Close()
-	SetReason( int)
+	RemoteIP() string
+	Close(int)
 	Destroy()
 	UserData() interface{}
 	SetUserData(data interface{})
