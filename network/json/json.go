@@ -128,6 +128,7 @@ func (p *Processor) callHandler(h MsgHandler, args []interface{}, cb func(interf
 			case error:
 				cb(nil, &gameError.ErrCode{ErrorCode: 0xFFFFFFFF, DescribeString: err.(error).Error()})
 			case runtime.Error:
+				log.Error(string(debug.Stack()))
 				cb(nil, &gameError.ErrCode{ErrorCode: 0xFFFFFFFF, DescribeString: err.(runtime.Error).Error()})
 			}
 		}
@@ -190,6 +191,7 @@ func (p *Processor) Marshal(msg interface{}, id ...string) ([][]byte, error) {
 		errCode.DescribeString = msg.(error).Error()
 		errCode.ErrorCode = 0xFFFFFFFF
 	case runtime.Error:
+		log.Error(string(debug.Stack()))
 		errCode = &gameError.ErrCode{}
 		errCode.DescribeString = msg.(runtime.Error).Error()
 		errCode.ErrorCode = 0xFFFFFFFF
@@ -216,7 +218,7 @@ func (p *Processor) GetMsgId(msg interface{}) (string, error) {
 	}
 	msgID := msgType.Elem().Name()
 	if _, ok := p.msgInfo[msgID]; !ok {
-		return "", fmt.Errorf("at json GetMsgId message %v not registered", msgID)
+		return msgID, fmt.Errorf("at json GetMsgId message %v not registered", msgID)
 	}
 	return msgID, nil
 }

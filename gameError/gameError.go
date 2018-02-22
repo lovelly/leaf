@@ -11,6 +11,7 @@ type ErrCode struct {
 	DescribeString string
 }
 
+
 func (err *ErrCode) ToSysError() error {
 	if err == nil {
 		return nil

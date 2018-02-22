@@ -8,6 +8,8 @@ import (
 
 	"runtime"
 
+	"runtime/debug"
+
 	"github.com/lovelly/leaf/gameError"
 	"github.com/lovelly/leaf/log"
 )
@@ -96,6 +98,7 @@ func (s *Server) ret(ci *CallInfo, ri interface{}) (err error) {
 		retInfo.Err.ErrorCode = InternalServerError
 		retInfo.Err.DescribeString = ri.(error).Error()
 	case runtime.Error:
+		log.Error(string(debug.Stack()))
 		retInfo.Err = &gameError.ErrCode{}
 		retInfo.Err.ErrorCode = InternalServerError
 		retInfo.Err.DescribeString = ri.(runtime.Error).Error()
@@ -151,6 +154,11 @@ func (s *Server) Exec(ci *CallInfo) {
 
 // goroutine safe
 func (s *Server) Go(id string, args ...interface{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+	}()
 	if atomic.LoadInt32(&s.CloseFlg) == 1 {
 		log.Error("at go services is close")
 		return
@@ -160,12 +168,6 @@ func (s *Server) Go(id string, args ...interface{}) {
 		log.Error("function id %v: function not registered", id)
 		return
 	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			log.Recover(r)
-		}
-	}()
 
 	err := s.call(&CallInfo{
 		fInfo: f,
@@ -178,6 +180,11 @@ func (s *Server) Go(id string, args ...interface{}) {
 
 // goroutine safe
 func (s *Server) Call0(id string, args ...interface{}) error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+	}()
 	if atomic.LoadInt32(&s.CloseFlg) == 1 {
 		log.Error("at Call0 chan is close %v", id)
 		return errors.New("] send on closed channel")
@@ -203,6 +210,11 @@ func (s *Server) Call0(id string, args ...interface{}) error {
 
 // goroutine safe
 func (s *Server) Call(id string, args ...interface{}) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+	}()
 	if atomic.LoadInt32(&s.CloseFlg) == 1 {
 		log.Error("at Call1 chan is close %v", id)
 		return nil, errors.New("] send on closed channel")
@@ -232,6 +244,12 @@ func (s *Server) AsynCall(srcCh chan *RetInfo, id string, args ...interface{}) {
 	if len(args) < 1 {
 		panic("callback function not found")
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+	}()
 
 	cb := args[len(args)-1]
 	args = args[:len(args)-1]
@@ -272,6 +290,11 @@ func (s *Server) AsynCall(srcCh chan *RetInfo, id string, args ...interface{}) {
 }
 
 func (s *Server) TimeOutCall(id string, t time.Duration, args ...interface{}) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+	}()
 	if atomic.LoadInt32(&s.CloseFlg) == 1 {
 		log.Error("at Call1 chan is close %v", id)
 		return nil, errors.New("] send on closed channel")
@@ -353,7 +376,7 @@ func (s *Server) ExecRemoveCb(ri *RetInfo) {
 		}
 	case func(interface{}, error):
 		if ri.Err == nil {
-			ri.Cb.(func(interface{},error))(ri.Ret,nil)
+			ri.Cb.(func(interface{}, error))(ri.Ret, nil)
 		} else {
 			ri.Cb.(func(interface{}, error))(ri.Ret, fmt.Errorf("errorCode:%d, error:%s", ri.Err.ErrorCode, ri.Err.DescribeString))
 		}

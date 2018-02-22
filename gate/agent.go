@@ -16,6 +16,7 @@ type Agent interface {
 	Destroy()
 	UserData() interface{}
 	SetUserData(data interface{})
+	SetCloseFunc(f func(args ...interface{}))
 	Skeleton() *module.Skeleton
 	ChanRPC() *chanrpc.Server
 }

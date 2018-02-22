@@ -218,6 +218,7 @@ func safePulishg(msg *S2S_NsqMsg) (err error) {
 		if err1 := recover(); err != nil {
 			switch err1.(type) {
 			case runtime.Error:
+				log.Error(string(debug.Stack()))
 				err = err1.(error)
 			}
 			log.Error("Publish msg recover error : %s, topc :%v ", err.Error(), msg)

@@ -23,6 +23,8 @@ var (
 	filter = []string{
 	/*"C2L_GetRoomList",
 	"L2C_GetRoomList",*/
+		"C2L_TimeSync",
+		"L2C_TimeSync",
 	}
 )
 
@@ -141,7 +143,12 @@ type agent struct {
 	gate        *Gate
 	userData    interface{}
 	Reason      int
+	closeFunc   func(...interface{})
 	sync.Mutex
+}
+
+func (a *agent) SetCloseFunc(f func(args ...interface{})) {
+	a.closeFunc = f
 }
 
 func (a *agent) Run() {
@@ -150,11 +157,9 @@ func (a *agent) Run() {
 			log.Recover(r)
 		}
 
-		if a.chanRPC != nil {
-			_, err := a.chanRPC.Call("CloseAgent", a, a.Reason)
-			if err != nil {
-				log.Error("chanrpc error: %v", err)
-			}
+		if a.closeFunc != nil {
+			a.closeFunc(a, a.Reason)
+			a.closeFunc = nil
 		}
 	}()
 
@@ -224,6 +229,7 @@ func (a *agent) Run() {
 		}
 		if err != nil {
 			log.Error("handle message: %v", err)
+			a.SetReason(4)
 			break
 		}
 	}
@@ -282,12 +288,9 @@ func (a *agent) Close(Reason int) {
 	a.Lock()
 	defer a.Unlock()
 	a.SetReason(Reason)
-	if a.chanRPC != nil {
-		_, err := a.chanRPC.TimeOutCall("CloseAgent", 3*time.Second, a, a.Reason)
-		if err != nil {
-			log.Error("chanrpc error: %v", err)
-		}
-		a.chanRPC = nil
+	if a.closeFunc != nil {
+		a.closeFunc(a, a.Reason)
+		a.closeFunc = nil
 	}
 
 	a.conn.Close()

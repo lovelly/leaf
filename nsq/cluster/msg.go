@@ -65,7 +65,7 @@ type S2S_NsqMsg struct {
 }
 
 func handleRequestMsg(recvMsg *S2S_NsqMsg) {
-	sendMsg := &S2S_NsqMsg{MsgType: NsqMsgTypeRsp, MsgID: "Return", DstServerName: recvMsg.SrcServerName, RequestID: recvMsg.RequestID}
+	sendMsg := &S2S_NsqMsg{MsgType: NsqMsgTypeRsp, MsgID: "Return :" + recvMsg.MsgID, DstServerName: recvMsg.SrcServerName, RequestID: recvMsg.RequestID}
 	if isClose() && recvMsg.MsgType == NsqMsgTypeForResult {
 		sendMsg.Err = fmt.Sprintf("%v server is closing", SelfName)
 		Publish(sendMsg)
