@@ -3,7 +3,7 @@ package gameError
 import (
 	"fmt"
 
-	"github.com/pkg/errors"
+	"errors"
 )
 
 type ErrCode struct {
